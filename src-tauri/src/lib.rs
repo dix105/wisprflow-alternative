@@ -8,6 +8,7 @@ use tauri::{
     Manager, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL,
 };
@@ -15,6 +16,21 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 #[derive(Debug, Deserialize)]
 struct GroqTranscription {
     text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqChatResponse {
+    choices: Vec<GroqChatChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqChatChoice {
+    message: GroqChatMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqChatMessage {
+    content: String,
 }
 
 #[tauri::command]
@@ -63,6 +79,81 @@ async fn transcribe_and_paste(api_key: String, audio_bytes: Vec<u8>) -> Result<S
     Ok(text)
 }
 
+#[tauri::command]
+async fn rewrite_text(api_key: String, text: String, mode: String) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Missing Groq API key".into());
+    }
+
+    let input = text.trim();
+    if input.is_empty() {
+        return Err("Nothing to rewrite yet".into());
+    }
+
+    let instruction = match mode.as_str() {
+        "professional" => "Rewrite the text to sound clear, polished, and professional. Preserve the meaning.",
+        "shorter" => "Make the text shorter and punchier. Preserve the core meaning.",
+        "friendly" => "Rewrite the text to sound warm, friendly, and natural. Preserve the meaning.",
+        _ => "Clean up dictation artifacts, punctuation, grammar, and structure. Preserve the speaker's meaning.",
+    };
+
+    let body = serde_json::json!({
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.2,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a dictation cleanup engine. Return only the rewritten text, with no explanation."
+            },
+            {
+                "role": "user",
+                "content": format!("{instruction}\n\nText:\n{input}")
+            }
+        ]
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.groq.com/openai/v1/chat/completions")
+        .bearer_auth(api_key.trim())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Groq rewrite request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Groq rewrite error {status}: {body}"));
+    }
+
+    let rewrite: GroqChatResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse Groq rewrite response: {e}"))?;
+
+    let text = rewrite
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim().to_string())
+        .unwrap_or_default();
+
+    if text.is_empty() {
+        return Err("Groq returned an empty rewrite".into());
+    }
+
+    Ok(text)
+}
+
+#[tauri::command]
+fn paste_transcript(text: String) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("Nothing to paste".into());
+    }
+
+    paste_text(text.trim())
+}
+
 fn paste_text(text: &str) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard unavailable: {e}"))?;
     clipboard
@@ -79,6 +170,13 @@ fn paste_text(text: &str) -> Result<(), String> {
 }
 
 fn send_ctrl_v() {
+    #[cfg(not(windows))]
+    {
+        return;
+    }
+
+    #[cfg(windows)]
+    {
     const V_KEY: u8 = 0x56;
 
     unsafe {
@@ -86,6 +184,7 @@ fn send_ctrl_v() {
         keybd_event(V_KEY, 0, KEYBD_EVENT_FLAGS(0), 0);
         keybd_event(V_KEY, 0, KEYEVENTF_KEYUP, 0);
         keybd_event(VK_CONTROL.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+    }
     }
 }
 
@@ -151,7 +250,11 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![transcribe_and_paste])
+        .invoke_handler(tauri::generate_handler![
+            transcribe_and_paste,
+            rewrite_text,
+            paste_transcript
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
