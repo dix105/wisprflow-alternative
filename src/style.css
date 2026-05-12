@@ -20,20 +20,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   height: min(820px, calc(100vh - 20px));
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
-  grid-template-rows: 44px minmax(0, 1fr);
   border: 1px solid #d7d4cd;
   border-radius: 10px;
   overflow: hidden;
   background: #f7f6f1;
   box-shadow: 0 24px 90px rgba(24, 24, 22, 0.28);
 }
-.window-strip { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 17px; background: #f7f6f1; color: #23211f; }
-.window-left, .window-right { display: flex; align-items: center; gap: 18px; font-weight: 700; }
-.mini-icon { color: #36332f; }
-.bell { position: relative; font-size: 14px; }
-.bell i { position: absolute; top: -8px; right: -9px; min-width: 16px; height: 16px; display: grid; place-items: center; border-radius: 999px; background: #ef4444; color: #fff; font-size: 9px; font-style: normal; }
 
-.side-rail { min-height: 0; padding: 14px 10px 12px; display: flex; flex-direction: column; gap: 11px; background: #f2f0eb; border-right: 1px solid #e5e1d9; overflow-y: auto; }
+.side-rail { min-height: 0; padding: 18px 10px 12px; display: flex; flex-direction: column; gap: 11px; background: #f2f0eb; border-right: 1px solid #e5e1d9; overflow-y: auto; }
 .brand-lockup { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: #191816; padding: 0 7px; text-align: left; }
 .brand-bars { width: 21px; height: 19px; display: flex; align-items: end; gap: 2px; }
 .brand-bars i { display: block; width: 3px; border-radius: 999px; background: #191816; }

@@ -32,11 +32,6 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <main class="flow-shell">
     <section class="desktop-frame">
-      <header class="window-strip">
-        <div class="window-left"><span class="mini-icon">▱</span><span class="mini-icon">◎</span></div>
-        <div class="window-right"><span class="bell">🔔<i>2</i></span><span>—</span><span>□</span><span>×</span></div>
-      </header>
-
       <aside class="side-rail" aria-label="FlowDesk navigation">
         <button class="brand-lockup" data-view="dictation" type="button">
           <span class="brand-bars"><i></i><i></i><i></i></span>
@@ -219,20 +214,24 @@ drawerBackdrop.addEventListener('click', closeSettings);
 openRewriteButton.addEventListener('click', () => setView('transforms'));
 
 window.addEventListener('keydown', async (event) => {
-  if (event.key === 'Escape') closeSettings();
+  if (event.key === 'Escape') {
+    if (capturingShortcut) {
+      finishShortcutCapture(shortcut, false);
+      setStatus('idle', 'Shortcut capture cancelled.');
+      return;
+    }
+    closeSettings();
+  }
+
   if (!capturingShortcut) return;
   event.preventDefault();
+  event.stopPropagation();
 
   const next = shortcutFromEvent(event);
   if (!next) return;
 
-  capturingShortcut = false;
-  captureShortcutButton.classList.remove('capturing');
-  captureShortcutMirrorButton.classList.remove('capturing');
-  shortcut = next;
-  renderShortcut(next);
-  setStatus('success', `Shortcut captured: ${formatShortcutLabel(next)}. Click Save to register it.`);
-});
+  finishShortcutCapture(next, true);
+}, true);
 
 autostartInput.addEventListener('change', async () => {
   try {
@@ -285,12 +284,30 @@ function setView(view: ViewName) {
   if (view === 'transforms') hydrateRewriteFromHistory();
 }
 
-function beginShortcutCapture() {
+async function beginShortcutCapture() {
   capturingShortcut = true;
   captureShortcutButton.classList.add('capturing');
   captureShortcutMirrorButton.classList.add('capturing');
   shortcutValue.textContent = 'Press your shortcut…';
   shortcutValueMirror.textContent = 'Press your shortcut…';
+
+  // Avoid the currently registered global shortcut stealing the key event while
+  // the user is trying to record a new shortcut.
+  if (isTauriRuntime && shortcut && await isRegistered(shortcut)) {
+    await unregister(shortcut);
+  }
+}
+
+function finishShortcutCapture(next: string, shouldSave: boolean) {
+  capturingShortcut = false;
+  captureShortcutButton.classList.remove('capturing');
+  captureShortcutMirrorButton.classList.remove('capturing');
+  shortcut = next;
+  renderShortcut(next);
+  localStorage.setItem('shortcut', next);
+  setStatus('success', shouldSave
+    ? `Shortcut captured: ${formatShortcutLabel(next)}. Click Save to register it.`
+    : `Shortcut restored: ${formatShortcutLabel(next)}`);
 }
 
 function openSettings() {
@@ -343,7 +360,11 @@ function shortcutFromEvent(event: KeyboardEvent) {
   if (event.shiftKey) parts.push('Shift');
 
   if (!['Control', 'Meta', 'Alt', 'Shift'].includes(key)) parts.push(key);
-  return parts.length > 1 ? parts.join('+') : '';
+
+  // Ignore modifier-only events; capture once the user presses the real key in
+  // the combination. Single non-modifier keys are allowed for power users.
+  const hasMainKey = parts.some((part) => !['CommandOrControl', 'Alt', 'Shift'].includes(part));
+  return hasMainKey ? parts.join('+') : '';
 }
 
 function normalizeKey(key: string) {
