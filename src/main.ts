@@ -8,11 +8,12 @@ const HISTORY_KEY = 'flowDeskHistory';
 const VOCABULARY_KEY = 'flowDeskVocabulary';
 const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
+const SARVAM_KEY = 'sarvamApiKey';
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
 type RewriteMode = 'clean' | 'professional' | 'shorter' | 'friendly';
-type TranscriptionProvider = 'groq' | 'elevenlabs';
+type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam';
 
 type HistoryItem = {
   id: string;
@@ -92,10 +93,12 @@ app.innerHTML = `
               <div class="provider-options">
                 <button class="provider-option active" data-provider="groq" type="button"><strong>Groq</strong><span>Whisper Large v3 Turbo</span><em>Make active</em></button>
                 <button class="provider-option" data-provider="elevenlabs" type="button"><strong>ElevenLabs</strong><span>Scribe v2 speech-to-text</span><em>Make active</em></button>
+                <button class="provider-option" data-provider="sarvam" type="button"><strong>Sarvam</strong><span>Saaras v3 speech-to-text</span><em>Make active</em></button>
               </div>
               <div class="provider-keys">
                 <label class="field compact-field"><span>Groq API key</span><input id="apiKey" type="password" autocomplete="off" placeholder="Groq key stored locally" /></label>
                 <label class="field compact-field"><span>ElevenLabs API key</span><input id="elevenLabsApiKey" type="password" autocomplete="off" placeholder="ElevenLabs key stored locally" /></label>
+                <label class="field compact-field"><span>Sarvam API key</span><input id="sarvamApiKey" type="password" autocomplete="off" placeholder="Sarvam key stored locally" /></label>
               </div>
             </article>
           </section>
@@ -150,6 +153,7 @@ app.innerHTML = `
 const apiKeyInput = document.querySelector<HTMLInputElement>('#apiKey')!;
 const drawerApiKeyInput = document.querySelector<HTMLInputElement>('#drawerApiKey')!;
 const elevenLabsApiKeyInput = document.querySelector<HTMLInputElement>('#elevenLabsApiKey')!;
+const sarvamApiKeyInput = document.querySelector<HTMLInputElement>('#sarvamApiKey')!;
 const activeProviderBadge = document.querySelector<HTMLElement>('#activeProviderBadge')!;
 const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput')!;
 const saveButton = document.querySelector<HTMLButtonElement>('#save')!;
@@ -179,6 +183,7 @@ const startFromScratchpadButton = document.querySelector<HTMLButtonElement>('#st
 apiKeyInput.value = localStorage.getItem('groqApiKey') || '';
 drawerApiKeyInput.value = apiKeyInput.value;
 elevenLabsApiKeyInput.value = localStorage.getItem(ELEVENLABS_KEY) || '';
+sarvamApiKeyInput.value = localStorage.getItem(SARVAM_KEY) || '';
 renderProvider();
 vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
@@ -188,6 +193,7 @@ hydrateRewriteFromHistory();
 apiKeyInput.addEventListener('change', syncApiKey);
 drawerApiKeyInput.addEventListener('change', syncApiKey);
 elevenLabsApiKeyInput.addEventListener('change', syncElevenLabsKey);
+sarvamApiKeyInput.addEventListener('change', syncSarvamKey);
 vocabularyInput.addEventListener('input', () => {
   localStorage.setItem(VOCABULARY_KEY, vocabularyInput.value.trim());
 });
@@ -203,11 +209,15 @@ function syncElevenLabsKey() {
   localStorage.setItem(ELEVENLABS_KEY, elevenLabsApiKeyInput.value.trim());
 }
 
+function syncSarvamKey() {
+  localStorage.setItem(SARVAM_KEY, sarvamApiKeyInput.value.trim());
+}
+
 function setProvider(provider: TranscriptionProvider) {
   transcriptionProvider = provider;
   localStorage.setItem(PROVIDER_KEY, provider);
   renderProvider();
-  setStatus('success', `${provider === 'groq' ? 'Groq' : 'ElevenLabs'} is now active for transcription.`);
+  setStatus('success', `${providerName(provider)} is now active for transcription.`);
 }
 
 function renderProvider() {
@@ -217,7 +227,7 @@ function renderProvider() {
     button.setAttribute('aria-pressed', String(isActive));
     button.querySelector('em')!.textContent = isActive ? 'Active' : 'Make active';
   });
-  activeProviderBadge.textContent = `${transcriptionProvider === 'groq' ? 'Groq' : 'ElevenLabs'} active`;
+  activeProviderBadge.textContent = `${providerName(transcriptionProvider)} active`;
 }
 
 document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
@@ -490,6 +500,7 @@ async function toggleRecording() {
   try {
     syncApiKey();
     syncElevenLabsKey();
+    syncSarvamKey();
     if (!activeTranscriptionKey()) {
       setStatus('error', `Add your ${providerLabel()} API key first.`);
       return;
@@ -581,12 +592,20 @@ function getRewriteText() {
   return text;
 }
 
+function providerName(provider: TranscriptionProvider) {
+  if (provider === 'groq') return 'Groq';
+  if (provider === 'elevenlabs') return 'ElevenLabs';
+  return 'Sarvam';
+}
+
 function providerLabel() {
-  return transcriptionProvider === 'groq' ? 'Groq' : 'ElevenLabs';
+  return providerName(transcriptionProvider);
 }
 
 function activeTranscriptionKey() {
-  return transcriptionProvider === 'groq' ? apiKeyInput.value.trim() : elevenLabsApiKeyInput.value.trim();
+  if (transcriptionProvider === 'groq') return apiKeyInput.value.trim();
+  if (transcriptionProvider === 'elevenlabs') return elevenLabsApiKeyInput.value.trim();
+  return sarvamApiKeyInput.value.trim();
 }
 
 function buildVocabularyPrompt() {

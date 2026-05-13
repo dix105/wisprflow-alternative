@@ -24,6 +24,12 @@ struct ElevenLabsTranscription {
 }
 
 #[derive(Debug, Deserialize)]
+struct SarvamTranscription {
+    transcript: Option<String>,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct GroqChatResponse {
     choices: Vec<GroqChatChoice>,
 }
@@ -48,6 +54,7 @@ async fn transcribe_and_paste(
     let provider = provider.unwrap_or_else(|| "groq".into());
     let text = match provider.as_str() {
         "elevenlabs" => transcribe_with_elevenlabs(api_key, audio_bytes).await?,
+        "sarvam" => transcribe_with_sarvam(api_key, audio_bytes).await?,
         _ => transcribe_with_groq(api_key, audio_bytes, vocabulary_prompt).await?,
     };
 
@@ -150,6 +157,55 @@ async fn transcribe_with_elevenlabs(api_key: String, audio_bytes: Vec<u8>) -> Re
     let text = transcription.text.trim().to_string();
     if text.is_empty() {
         return Err("ElevenLabs returned an empty transcript".into());
+    }
+
+    Ok(text)
+}
+
+async fn transcribe_with_sarvam(api_key: String, audio_bytes: Vec<u8>) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Missing Sarvam API key".into());
+    }
+
+    let part = Part::bytes(audio_bytes)
+        .file_name("dictation.webm")
+        .mime_str("audio/webm")
+        .map_err(|e| e.to_string())?;
+
+    let form = Form::new()
+        .text("model", "saaras:v3")
+        .text("mode", "transcribe")
+        .part("file", part);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.sarvam.ai/speech-to-text")
+        .header("api-subscription-key", api_key.trim())
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Sarvam request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Sarvam API error {status}: {body}"));
+    }
+
+    let transcription: SarvamTranscription = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse Sarvam response: {e}"))?;
+
+    let text = transcription
+        .transcript
+        .or(transcription.text)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        return Err("Sarvam returned an empty transcript".into());
     }
 
     Ok(text)
