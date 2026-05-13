@@ -30,8 +30,7 @@ const isTauriRuntime = '__TAURI_INTERNALS__' in window;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
-  <main class="flow-shell">
-    <section class="desktop-frame">
+  <main class="app-layout">
       <aside class="side-rail" aria-label="FlowDesk navigation">
         <button class="brand-lockup" data-view="dictation" type="button">
           <span class="brand-bars"><i></i><i></i><i></i></span>
@@ -134,7 +133,6 @@ app.innerHTML = `
         </section>
 
       </section>
-    </section>
 
     <aside id="settingsDrawer" class="settings-drawer" aria-hidden="true">
       <div class="drawer-backdrop" id="drawerBackdrop"></div>

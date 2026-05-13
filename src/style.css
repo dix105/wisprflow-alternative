@@ -14,8 +14,8 @@ button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #191816; outline-offset: 2px; }
 
-.flow-shell { min-height: 100vh; background: #f7f6f1; }
-.desktop-frame {
+#app { min-height: 100vh; background: #f7f6f1; }
+.app-layout {
   width: 100vw;
   height: 100vh;
   display: grid;
@@ -157,7 +157,7 @@ kbd { display: inline-flex; min-width: 25px; justify-content: center; margin: 0 
 @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
 
 @media (max-width: 960px) {
-  .desktop-frame { grid-template-columns: 1fr; }
+  .app-layout { grid-template-columns: 1fr; }
   .side-rail { display: none; }
   .content-shell { margin: 0; border-radius: 0; }
   .view-panel { padding: 28px; }
