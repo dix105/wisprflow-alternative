@@ -74,7 +74,7 @@ app.innerHTML = `
                 <div id="recordOrb" class="record-orb"><span class="orb-core"></span><i></i><i></i><i></i><i></i></div>
                 <div><strong>Your dictation key</strong><span>Set once. Use everywhere.</span></div>
               </div>
-              <div class="shortcut-inline shortcut-large"><span>Keyboard shortcut</span><button id="captureShortcut" class="shortcut-capture" type="button"><span id="shortcutValue">CommandOrControl + Alt + Space</span></button><button id="save" class="soft-btn" type="button">Save</button></div>
+              <div class="shortcut-inline shortcut-large"><span>Keyboard shortcut</span><button id="captureShortcut" class="shortcut-capture" type="button"><span id="shortcutValue">CommandOrControl + Alt + Space</span><span class="edit-pencil">✎</span></button><button id="save" class="soft-btn" type="button">Save</button></div>
               <div class="hotkey-footer">
                 <div id="status" class="status idle">Ready. Press the shortcut to record and paste.</div>
                 <label class="field compact-field"><span>Groq connection</span><input id="apiKey" type="password" autocomplete="off" placeholder="Groq key stored locally" /></label>

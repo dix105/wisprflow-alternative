@@ -102,11 +102,15 @@ input, textarea { width: 100%; border: 1px solid #e3dfd6; border-radius: 9px; pa
 input::placeholder, textarea::placeholder { color: #aaa49a; }
 .shortcut-inline { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
 .shortcut-inline > span { grid-column: 1 / -1; }
-.shortcut-large { padding: 16px; border: 1px solid #ebe6dd; border-radius: 20px; background: #fff; }
+.shortcut-large { padding: 14px; border: 1px solid #ebe6dd; border-radius: 18px; background: #fff; }
 .shortcut-large > span { color: #7b5a38; font-size: 12px; letter-spacing: .09em; text-transform: uppercase; }
 .shortcut-capture { min-height: 38px; border: 1px dashed #d8d3c9; border-radius: 9px; background: #fbfaf7; color: #191816; }
-.shortcut-large .shortcut-capture { min-height: 112px; border: 1px solid #cfc6b8; border-radius: 20px; background: #f7f5f0; font-size: 29px; font-weight: 850; letter-spacing: -.04em; }
-.shortcut-large .soft-btn { min-height: 112px; min-width: 104px; border-radius: 20px; background: #191816; color: #fff; font-size: 18px; }
+.shortcut-large .shortcut-capture { min-height: 54px; border: 1px solid #d8d3c9; border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.shortcut-large .shortcut-capture #shortcutValue { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.shortcut-large .soft-btn { min-height: 54px; min-width: 72px; border-radius: 12px; background: #191816; color: #fff; font-size: 14px; }
+.edit-pencil { margin-left: auto; color: #6b665e; font-size: 17px; line-height: 1; }
+.shortcut-large kbd { min-width: 0; margin: 0; padding: 6px 9px; border-color: #eeeae2; border-radius: 7px; background: #f7f5f0; box-shadow: 0 1px 2px rgba(25,24,22,.04); font-size: 16px; }
+.shortcut-large .shortcut-plus { color: #8b8479; font-size: 16px; }
 .hotkey-footer { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: end; }
 .hotkey-footer .status { margin: 0; min-height: 58px; display: flex; align-items: center; }
 .shortcut-capture.capturing { border-color: #191816; box-shadow: 0 0 0 4px rgba(25,24,22,.08); }
