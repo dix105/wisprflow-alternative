@@ -90,15 +90,19 @@ app.innerHTML = `
                 <div><strong>Transcription provider</strong><span>Choose which engine turns speech into text.</span></div>
                 <span id="activeProviderBadge" class="active-provider-badge">Groq active</span>
               </div>
-              <div class="provider-options">
-                <button class="provider-option active" data-provider="groq" type="button"><strong>Groq</strong><span>Whisper Large v3 Turbo</span><em>Make active</em></button>
-                <button class="provider-option" data-provider="elevenlabs" type="button"><strong>ElevenLabs</strong><span>Scribe v2 speech-to-text</span><em>Make active</em></button>
-                <button class="provider-option" data-provider="sarvam" type="button"><strong>Sarvam</strong><span>Saaras v3 speech-to-text</span><em>Make active</em></button>
-              </div>
-              <div class="provider-keys">
-                <label class="field compact-field"><span>Groq API key</span><input id="apiKey" type="password" autocomplete="off" placeholder="Groq key stored locally" /></label>
-                <label class="field compact-field"><span>ElevenLabs API key</span><input id="elevenLabsApiKey" type="password" autocomplete="off" placeholder="ElevenLabs key stored locally" /></label>
-                <label class="field compact-field"><span>Sarvam API key</span><input id="sarvamApiKey" type="password" autocomplete="off" placeholder="Sarvam key stored locally" /></label>
+              <div class="provider-list">
+                <div class="provider-row active" data-provider-row="groq">
+                  <button class="provider-option" data-provider="groq" type="button"><strong>Groq</strong><span>Whisper Large v3 Turbo</span><em>Active</em></button>
+                  <label class="field compact-field"><span>Groq API key</span><input id="apiKey" type="password" autocomplete="off" placeholder="Groq key stored locally" /></label>
+                </div>
+                <div class="provider-row" data-provider-row="elevenlabs">
+                  <button class="provider-option" data-provider="elevenlabs" type="button"><strong>ElevenLabs</strong><span>Scribe v2 speech-to-text</span><em>Make active</em></button>
+                  <label class="field compact-field"><span>ElevenLabs API key</span><input id="elevenLabsApiKey" type="password" autocomplete="off" placeholder="ElevenLabs key stored locally" /></label>
+                </div>
+                <div class="provider-row" data-provider-row="sarvam">
+                  <button class="provider-option" data-provider="sarvam" type="button"><strong>Sarvam</strong><span>Saaras v3 speech-to-text</span><em>Make active</em></button>
+                  <label class="field compact-field"><span>Sarvam API key</span><input id="sarvamApiKey" type="password" autocomplete="off" placeholder="Sarvam key stored locally" /></label>
+                </div>
               </div>
             </article>
           </section>
@@ -226,6 +230,9 @@ function renderProvider() {
     button.classList.toggle('active', isActive);
     button.setAttribute('aria-pressed', String(isActive));
     button.querySelector('em')!.textContent = isActive ? 'Active' : 'Make active';
+  });
+  document.querySelectorAll<HTMLElement>('[data-provider-row]').forEach((row) => {
+    row.classList.toggle('active', row.dataset.providerRow === transcriptionProvider);
   });
   activeProviderBadge.textContent = `${providerName(transcriptionProvider)} active`;
 }
