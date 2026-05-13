@@ -42,9 +42,6 @@ app.innerHTML = `
         <nav class="nav-list" aria-label="Primary">
           <button class="nav-item active" data-view="dictation" type="button"><span>⌘</span>Home</button>
           <button class="nav-item" data-view="dictionary" type="button"><span>▣</span>Dictionary</button>
-          <button class="nav-item" data-view="snippets" type="button"><span>✂</span>Snippets</button>
-          <button class="nav-item" data-view="style" type="button"><span>Tt</span>Style</button>
-          <button class="nav-item" data-view="transforms" type="button"><span>↝</span>Transforms</button>
           <button class="nav-item" data-view="scratchpad" type="button"><span>▤</span>Scratchpad</button>
         </nav>
 
