@@ -6,10 +6,13 @@ import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
 const DEFAULT_SHORTCUT = 'CommandOrControl+Alt+Space';
 const HISTORY_KEY = 'flowDeskHistory';
 const VOCABULARY_KEY = 'flowDeskVocabulary';
+const PROVIDER_KEY = 'flowDeskProvider';
+const ELEVENLABS_KEY = 'elevenLabsApiKey';
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
 type RewriteMode = 'clean' | 'professional' | 'shorter' | 'friendly';
+type TranscriptionProvider = 'groq' | 'elevenlabs';
 
 type HistoryItem = {
   id: string;
@@ -24,6 +27,7 @@ let chunks: BlobPart[] = [];
 let shortcut = localStorage.getItem('shortcut') || DEFAULT_SHORTCUT;
 let capturingShortcut = false;
 let pressedShortcutModifiers = new Set<string>();
+let transcriptionProvider = (localStorage.getItem(PROVIDER_KEY) as TranscriptionProvider) || 'groq';
 let historyItems: HistoryItem[] = loadHistory();
 let selectedHistoryId = historyItems[0]?.id || '';
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -77,7 +81,21 @@ app.innerHTML = `
               <div class="shortcut-inline shortcut-large"><span>Keyboard shortcut</span><button id="captureShortcut" class="shortcut-capture" type="button"><span id="shortcutValue">CommandOrControl + Alt + Space</span><span class="edit-pencil">✎</span></button><button id="save" class="soft-btn" type="button">Save</button></div>
               <div class="hotkey-footer">
                 <div id="status" class="status idle">Ready. Press the shortcut to record and paste.</div>
-                <label class="field compact-field"><span>Groq connection</span><input id="apiKey" type="password" autocomplete="off" placeholder="Groq key stored locally" /></label>
+              </div>
+            </article>
+
+            <article class="provider-card">
+              <div class="provider-card-head">
+                <div><strong>Transcription provider</strong><span>Choose which engine turns speech into text.</span></div>
+                <span id="activeProviderBadge" class="active-provider-badge">Groq active</span>
+              </div>
+              <div class="provider-options">
+                <button class="provider-option active" data-provider="groq" type="button"><strong>Groq</strong><span>Whisper Large v3 Turbo</span><em>Make active</em></button>
+                <button class="provider-option" data-provider="elevenlabs" type="button"><strong>ElevenLabs</strong><span>Scribe v2 speech-to-text</span><em>Make active</em></button>
+              </div>
+              <div class="provider-keys">
+                <label class="field compact-field"><span>Groq API key</span><input id="apiKey" type="password" autocomplete="off" placeholder="Groq key stored locally" /></label>
+                <label class="field compact-field"><span>ElevenLabs API key</span><input id="elevenLabsApiKey" type="password" autocomplete="off" placeholder="ElevenLabs key stored locally" /></label>
               </div>
             </article>
           </section>
@@ -131,6 +149,8 @@ app.innerHTML = `
 
 const apiKeyInput = document.querySelector<HTMLInputElement>('#apiKey')!;
 const drawerApiKeyInput = document.querySelector<HTMLInputElement>('#drawerApiKey')!;
+const elevenLabsApiKeyInput = document.querySelector<HTMLInputElement>('#elevenLabsApiKey')!;
+const activeProviderBadge = document.querySelector<HTMLElement>('#activeProviderBadge')!;
 const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput')!;
 const saveButton = document.querySelector<HTMLButtonElement>('#save')!;
 const saveMirrorButton = document.querySelector<HTMLButtonElement>('#saveMirror')!;
@@ -158,6 +178,8 @@ const startFromScratchpadButton = document.querySelector<HTMLButtonElement>('#st
 
 apiKeyInput.value = localStorage.getItem('groqApiKey') || '';
 drawerApiKeyInput.value = apiKeyInput.value;
+elevenLabsApiKeyInput.value = localStorage.getItem(ELEVENLABS_KEY) || '';
+renderProvider();
 vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
 renderHistory();
@@ -165,6 +187,7 @@ hydrateRewriteFromHistory();
 
 apiKeyInput.addEventListener('change', syncApiKey);
 drawerApiKeyInput.addEventListener('change', syncApiKey);
+elevenLabsApiKeyInput.addEventListener('change', syncElevenLabsKey);
 vocabularyInput.addEventListener('input', () => {
   localStorage.setItem(VOCABULARY_KEY, vocabularyInput.value.trim());
 });
@@ -176,8 +199,33 @@ function syncApiKey() {
   localStorage.setItem('groqApiKey', key);
 }
 
+function syncElevenLabsKey() {
+  localStorage.setItem(ELEVENLABS_KEY, elevenLabsApiKeyInput.value.trim());
+}
+
+function setProvider(provider: TranscriptionProvider) {
+  transcriptionProvider = provider;
+  localStorage.setItem(PROVIDER_KEY, provider);
+  renderProvider();
+  setStatus('success', `${provider === 'groq' ? 'Groq' : 'ElevenLabs'} is now active for transcription.`);
+}
+
+function renderProvider() {
+  document.querySelectorAll<HTMLButtonElement>('[data-provider]').forEach((button) => {
+    const isActive = button.dataset.provider === transcriptionProvider;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+    button.querySelector('em')!.textContent = isActive ? 'Active' : 'Make active';
+  });
+  activeProviderBadge.textContent = `${transcriptionProvider === 'groq' ? 'Groq' : 'ElevenLabs'} active`;
+}
+
 document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
   button.addEventListener('click', () => setView(button.dataset.view as ViewName));
+});
+
+document.querySelectorAll<HTMLButtonElement>('[data-provider]').forEach((button) => {
+  button.addEventListener('click', () => setProvider(button.dataset.provider as TranscriptionProvider));
 });
 
 document.querySelectorAll<HTMLButtonElement>('[data-shortcut]').forEach((button) => {
@@ -441,8 +489,9 @@ async function toggleRecording() {
 
   try {
     syncApiKey();
-    if (!apiKeyInput.value.trim()) {
-      setStatus('error', 'Add your Groq API key first.');
+    syncElevenLabsKey();
+    if (!activeTranscriptionKey()) {
+      setStatus('error', `Add your ${providerLabel()} API key first.`);
       return;
     }
 
@@ -473,12 +522,13 @@ function pickMimeType() {
 
 async function transcribeAndPaste() {
   try {
-    setStatus('working', 'Transcribing with Groq and pasting into the focused app…');
+    setStatus('working', `Transcribing with ${providerLabel()} and pasting into the focused app…`);
     const blob = new Blob(chunks, { type: 'audio/webm' });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
 
     const text = await invoke<string>('transcribe_and_paste', {
-      apiKey: apiKeyInput.value.trim(),
+      provider: transcriptionProvider,
+      apiKey: activeTranscriptionKey(),
       audioBytes: bytes,
       vocabularyPrompt: buildVocabularyPrompt(),
     });
@@ -529,6 +579,14 @@ function getRewriteText() {
     return '';
   }
   return text;
+}
+
+function providerLabel() {
+  return transcriptionProvider === 'groq' ? 'Groq' : 'ElevenLabs';
+}
+
+function activeTranscriptionKey() {
+  return transcriptionProvider === 'groq' ? apiKeyInput.value.trim() : elevenLabsApiKeyInput.value.trim();
 }
 
 function buildVocabularyPrompt() {

@@ -19,6 +19,11 @@ struct GroqTranscription {
 }
 
 #[derive(Debug, Deserialize)]
+struct ElevenLabsTranscription {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct GroqChatResponse {
     choices: Vec<GroqChatChoice>,
 }
@@ -35,6 +40,22 @@ struct GroqChatMessage {
 
 #[tauri::command]
 async fn transcribe_and_paste(
+    provider: Option<String>,
+    api_key: String,
+    audio_bytes: Vec<u8>,
+    vocabulary_prompt: Option<String>,
+) -> Result<String, String> {
+    let provider = provider.unwrap_or_else(|| "groq".into());
+    let text = match provider.as_str() {
+        "elevenlabs" => transcribe_with_elevenlabs(api_key, audio_bytes).await?,
+        _ => transcribe_with_groq(api_key, audio_bytes, vocabulary_prompt).await?,
+    };
+
+    paste_text(&text)?;
+    Ok(text)
+}
+
+async fn transcribe_with_groq(
     api_key: String,
     audio_bytes: Vec<u8>,
     vocabulary_prompt: Option<String>,
@@ -86,7 +107,51 @@ async fn transcribe_and_paste(
         return Err("Groq returned an empty transcript".into());
     }
 
-    paste_text(&text)?;
+    Ok(text)
+}
+
+async fn transcribe_with_elevenlabs(api_key: String, audio_bytes: Vec<u8>) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Missing ElevenLabs API key".into());
+    }
+
+    let part = Part::bytes(audio_bytes)
+        .file_name("dictation.webm")
+        .mime_str("audio/webm")
+        .map_err(|e| e.to_string())?;
+
+    let form = Form::new()
+        .text("model_id", "scribe_v2")
+        .text("language_code", "eng")
+        .text("tag_audio_events", "false")
+        .text("diarize", "false")
+        .part("file", part);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.elevenlabs.io/v1/speech-to-text")
+        .header("xi-api-key", api_key.trim())
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("ElevenLabs request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("ElevenLabs API error {status}: {body}"));
+    }
+
+    let transcription: ElevenLabsTranscription = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse ElevenLabs response: {e}"))?;
+
+    let text = transcription.text.trim().to_string();
+    if text.is_empty() {
+        return Err("ElevenLabs returned an empty transcript".into());
+    }
+
     Ok(text)
 }
 
