@@ -46,7 +46,6 @@ app.innerHTML = `
 
         <nav class="nav-list" aria-label="Primary">
           <button class="nav-item active" data-view="dictation" type="button"><span>⌘</span>Home</button>
-          <button class="nav-item" data-view="dictionary" type="button"><span>▣</span>Dictionary</button>
           <button class="nav-item" data-view="scratchpad" type="button"><span>▤</span>Scratchpad</button>
         </nav>
 
@@ -66,7 +65,7 @@ app.innerHTML = `
               <span class="console-kicker">Recording console</span>
               <h2>Ready for desktop dictation</h2>
               <p>Press the hotkey from any app. FlowDesk listens, transcribes, and pastes back into the field you were using.</p>
-              <div class="promo-actions"><button id="toggle" class="primary-btn" type="button"><span class="button-dot"></span>Start recording</button><button id="openRewrite" class="secondary-btn" type="button">Rewrite last</button></div>
+              <div class="promo-actions"><button id="toggle" class="primary-btn" type="button"><span class="button-dot"></span>Start recording</button></div>
             </div>
             <div class="console-visual clean" aria-hidden="true">
               <div class="wave-card"><span></span><span></span><span></span><span></span><span></span></div>
@@ -106,12 +105,6 @@ app.innerHTML = `
               </div>
             </article>
           </section>
-        </section>
-
-        <section class="view-panel" data-panel="dictionary">
-          <header class="page-head"><div><h1>Dictionary</h1><p>Teach FlowDesk the names, products, and words you say often.</p></div><button class="primary-btn small" type="button">Add new</button></header>
-          <article class="dictionary-hero"><h2>FlowDesk speaks the way you speak.</h2><p>Add personal terms, company jargon, client names, or industry-specific lingo. Whisper uses these hints during transcription.</p><div class="word-pills"><span>Dixit</span><span>OpenClaw</span><span>Groq</span><span>Nextbase</span><span>Wispr</span></div></article>
-          <label class="dictionary-editor"><span>Common words / vocabulary</span><textarea id="vocabularyInput" class="compact-textarea" placeholder="Dixit, FlowDesk, Groq, OpenClaw, Wispr"></textarea><small>Separate words by comma or line break. Stored locally.</small></label>
         </section>
 
         <section class="view-panel" data-panel="snippets">
@@ -159,7 +152,7 @@ const drawerApiKeyInput = document.querySelector<HTMLInputElement>('#drawerApiKe
 const elevenLabsApiKeyInput = document.querySelector<HTMLInputElement>('#elevenLabsApiKey')!;
 const sarvamApiKeyInput = document.querySelector<HTMLInputElement>('#sarvamApiKey')!;
 const activeProviderBadge = document.querySelector<HTMLElement>('#activeProviderBadge')!;
-const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput')!;
+const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput');
 const saveButton = document.querySelector<HTMLButtonElement>('#save')!;
 const saveMirrorButton = document.querySelector<HTMLButtonElement>('#saveMirror')!;
 const toggleButton = document.querySelector<HTMLButtonElement>('#toggle')!;
@@ -179,7 +172,7 @@ const miniStopButton = document.querySelector<HTMLButtonElement>('#miniStop')!;
 const rewriteInput = document.querySelector<HTMLTextAreaElement>('#rewriteInput')!;
 const rewriteOutput = document.querySelector<HTMLElement>('#rewriteOutput')!;
 const historyList = document.querySelector<HTMLElement>('#historyList')!;
-const openRewriteButton = document.querySelector<HTMLButtonElement>('#openRewrite')!;
+const openRewriteButton = document.querySelector<HTMLButtonElement>('#openRewrite');
 const copyRewriteButton = document.querySelector<HTMLButtonElement>('#copyRewrite')!;
 const pasteRewriteButton = document.querySelector<HTMLButtonElement>('#pasteRewrite')!;
 const startFromScratchpadButton = document.querySelector<HTMLButtonElement>('#startFromScratchpad')!;
@@ -189,7 +182,7 @@ drawerApiKeyInput.value = apiKeyInput.value;
 elevenLabsApiKeyInput.value = localStorage.getItem(ELEVENLABS_KEY) || '';
 sarvamApiKeyInput.value = localStorage.getItem(SARVAM_KEY) || '';
 renderProvider();
-vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
+if (vocabularyInput) vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
 renderHistory();
 hydrateRewriteFromHistory();
@@ -198,7 +191,7 @@ apiKeyInput.addEventListener('change', syncApiKey);
 drawerApiKeyInput.addEventListener('change', syncApiKey);
 elevenLabsApiKeyInput.addEventListener('change', syncElevenLabsKey);
 sarvamApiKeyInput.addEventListener('change', syncSarvamKey);
-vocabularyInput.addEventListener('input', () => {
+vocabularyInput?.addEventListener('input', () => {
   localStorage.setItem(VOCABULARY_KEY, vocabularyInput.value.trim());
 });
 
@@ -262,7 +255,7 @@ miniStopButton.addEventListener('click', () => toggleRecording());
 settingsButton?.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
 drawerBackdrop.addEventListener('click', closeSettings);
-openRewriteButton.addEventListener('click', () => setView('transforms'));
+openRewriteButton?.addEventListener('click', () => setView('transforms'));
 startFromScratchpadButton.addEventListener('click', () => toggleRecording());
 
 window.addEventListener('keydown', async (event) => {
@@ -616,7 +609,7 @@ function activeTranscriptionKey() {
 }
 
 function buildVocabularyPrompt() {
-  const vocabulary = vocabularyInput.value
+  const vocabulary = (vocabularyInput?.value || '')
     .split(/[\n,]/)
     .map((word) => word.trim())
     .filter(Boolean)
