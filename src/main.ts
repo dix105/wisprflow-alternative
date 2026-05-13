@@ -118,8 +118,14 @@ app.innerHTML = `
         </section>
 
         <section class="view-panel" data-panel="scratchpad">
-          <header class="page-head"><div><h1>Scratchpad</h1><p>Recent transcripts and recoverable text.</p></div></header>
-          <article class="history-card full"><div id="historyList" class="history-list"></div></article>
+          <header class="page-head scratchpad-head">
+            <div><h1>Scratchpad</h1><p>Recovered dictations, copied text, and rewrite-ready transcripts.</p></div>
+            <button id="startFromScratchpad" class="primary-btn small" type="button"><span class="button-dot"></span>Record</button>
+          </header>
+          <article class="scratchpad-panel">
+            <div class="scratchpad-toolbar"><span>Recent transcripts</span><small>Newest first · stored locally</small></div>
+            <div id="historyList" class="history-list"></div>
+          </article>
         </section>
 
       </section>
@@ -161,6 +167,7 @@ const historyList = document.querySelector<HTMLElement>('#historyList')!;
 const openRewriteButton = document.querySelector<HTMLButtonElement>('#openRewrite')!;
 const copyRewriteButton = document.querySelector<HTMLButtonElement>('#copyRewrite')!;
 const pasteRewriteButton = document.querySelector<HTMLButtonElement>('#pasteRewrite')!;
+const startFromScratchpadButton = document.querySelector<HTMLButtonElement>('#startFromScratchpad')!;
 
 apiKeyInput.value = localStorage.getItem('groqApiKey') || '';
 drawerApiKeyInput.value = apiKeyInput.value;
@@ -204,6 +211,7 @@ settingsButton.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
 drawerBackdrop.addEventListener('click', closeSettings);
 openRewriteButton.addEventListener('click', () => setView('transforms'));
+startFromScratchpadButton.addEventListener('click', () => toggleRecording());
 
 window.addEventListener('keydown', async (event) => {
   if (!capturingShortcut && event.key === 'Escape') {
@@ -597,8 +605,11 @@ function renderHistory() {
 
   historyList.innerHTML = historyItems.map((item) => `
     <article class="history-item ${item.id === selectedHistoryId ? 'selected' : ''}" data-history-id="${item.id}">
-      <div>
+      <div class="history-meta">
         <time>${formatDate(item.createdAt)}</time>
+        <span>${wordCount(item.text)} words</span>
+      </div>
+      <div class="history-body">
         <p>${escapeHtml(item.text)}</p>
         ${item.rewrite ? `<small>${item.rewriteMode}: ${escapeHtml(item.rewrite)}</small>` : ''}
       </div>
@@ -636,6 +647,10 @@ function renderHistory() {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function wordCount(value: string) {
+  return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function escapeHtml(value: string) {
