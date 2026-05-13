@@ -45,11 +45,6 @@ app.innerHTML = `
           <button class="nav-item" data-view="scratchpad" type="button"><span>▤</span>Scratchpad</button>
         </nav>
 
-        <nav class="rail-footer">
-          <button type="button"><span>♙</span> Invite team</button>
-          <button id="settingsButton" type="button" aria-expanded="false" aria-controls="settingsDrawer"><span>⚙</span> Settings</button>
-          <button type="button"><span>?</span> Help</button>
-        </nav>
       </aside>
 
       <section class="content-shell">
@@ -152,7 +147,7 @@ const captureShortcutButton = document.querySelector<HTMLButtonElement>('#captur
 const captureShortcutMirrorButton = document.querySelector<HTMLButtonElement>('#captureShortcutMirror')!;
 const shortcutValue = document.querySelector<HTMLElement>('#shortcutValue')!;
 const shortcutValueMirror = document.querySelector<HTMLElement>('#shortcutValueMirror')!;
-const settingsButton = document.querySelector<HTMLButtonElement>('#settingsButton')!;
+const settingsButton = document.querySelector<HTMLButtonElement>('#settingsButton');
 const closeSettingsButton = document.querySelector<HTMLButtonElement>('#closeSettings')!;
 const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')!;
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
@@ -207,7 +202,7 @@ saveButton.addEventListener('click', () => installShortcut(shortcut));
 saveMirrorButton.addEventListener('click', () => installShortcut(shortcut));
 toggleButton.addEventListener('click', () => toggleRecording());
 miniStopButton.addEventListener('click', () => toggleRecording());
-settingsButton.addEventListener('click', openSettings);
+settingsButton?.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
 drawerBackdrop.addEventListener('click', closeSettings);
 openRewriteButton.addEventListener('click', () => setView('transforms'));
@@ -328,13 +323,13 @@ function finishShortcutCapture(next: string, shouldSave: boolean) {
 function openSettings() {
   settingsDrawer.classList.add('open');
   settingsDrawer.setAttribute('aria-hidden', 'false');
-  settingsButton.setAttribute('aria-expanded', 'true');
+  settingsButton?.setAttribute('aria-expanded', 'true');
 }
 
 function closeSettings() {
   settingsDrawer.classList.remove('open');
   settingsDrawer.setAttribute('aria-hidden', 'true');
-  settingsButton.setAttribute('aria-expanded', 'false');
+  settingsButton?.setAttribute('aria-expanded', 'false');
 }
 
 function setStatus(kind: StatusKind, message: string) {
