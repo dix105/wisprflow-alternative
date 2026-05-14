@@ -10,7 +10,7 @@ use tauri::{
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_VOLUME_DOWN, VK_VOLUME_UP,
+    keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_MEDIA_PLAY_PAUSE, VK_VOLUME_DOWN, VK_VOLUME_UP,
 };
 
 #[derive(Debug, Deserialize)]
@@ -279,6 +279,25 @@ async fn rewrite_text(api_key: String, text: String, mode: String) -> Result<Str
 }
 
 
+
+#[tauri::command]
+fn pause_background_media() {
+    send_media_play_pause();
+}
+
+#[tauri::command]
+fn resume_background_media() {
+    send_media_play_pause();
+}
+
+fn send_media_play_pause() {
+    #[cfg(windows)]
+    unsafe {
+        keybd_event(VK_MEDIA_PLAY_PAUSE.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_MEDIA_PLAY_PAUSE.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+    }
+}
+
 #[tauri::command]
 fn start_audio_ducking() {
     smooth_volume_keypress(true);
@@ -423,7 +442,9 @@ pub fn run() {
             rewrite_text,
             paste_transcript,
             start_audio_ducking,
-            restore_audio_ducking
+            restore_audio_ducking,
+            pause_background_media,
+            resume_background_media
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

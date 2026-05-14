@@ -14,6 +14,7 @@ Deskflow was created as a desktop-first dictation tool with a clean Flow-style i
 - Local transcript history / scratchpad
 - Dictation stats: words per minute, average words, and total words spoken
 - Optional smooth audio ducking that lowers system volume during recording and restores it after
+- Optional background media pause/resume while recording
 - Dictionary vocabulary hints for better spelling
 - Rewrite modes for cleaning or reshaping text
 - Provider selection between Groq and ElevenLabs
@@ -126,6 +127,13 @@ Each transcript card shows:
 - transcript text
 - Copy action
 - Rewrite action
+
+### Background media controls
+
+Settings includes two separate controls:
+
+- **Smooth volume ducking** lowers/restores system volume while recording.
+- **Pause background media** sends the system media play/pause key when recording starts and stops, so videos/music can pause and resume.
 
 ### Smooth volume ducking
 
