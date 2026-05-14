@@ -9,6 +9,7 @@ const VOCABULARY_KEY = 'flowDeskVocabulary';
 const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
 const SARVAM_KEY = 'sarvamApiKey';
+const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
@@ -19,6 +20,8 @@ type HistoryItem = {
   id: string;
   text: string;
   createdAt: string;
+  durationMs?: number;
+  wordsPerMinute?: number;
   rewrite?: string;
   rewriteMode?: RewriteMode;
 };
@@ -31,7 +34,10 @@ let pressedShortcutModifiers = new Set<string>();
 let transcriptionProvider = (localStorage.getItem(PROVIDER_KEY) as TranscriptionProvider) || 'groq';
 let historyItems: HistoryItem[] = loadHistory();
 let selectedHistoryId = historyItems[0]?.id || '';
+let recordingStartedAt = 0;
+let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
+const numberFormatter = new Intl.NumberFormat();
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -71,6 +77,12 @@ app.innerHTML = `
               <div class="wave-card"><span></span><span></span><span></span><span></span><span></span></div>
             </div>
           </article>
+
+          <section class="stats-strip" aria-label="Dictation stats">
+            <article><span>Total words spoken</span><strong id="totalWordsSpoken">0</strong><small>Across saved dictations</small></article>
+            <article><span>Last speed</span><strong id="lastWordsPerMinute">—</strong><small>Words per minute</small></article>
+            <article><span>Last recording</span><strong id="lastRecordingWords">—</strong><small>Words captured</small></article>
+          </section>
 
           <section class="home-grid">
             <article class="setup-card hotkey-card">
@@ -166,6 +178,9 @@ const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
 const statusBox = document.querySelector<HTMLElement>('#status')!;
+const totalWordsSpokenEl = document.querySelector<HTMLElement>('#totalWordsSpoken')!;
+const lastWordsPerMinuteEl = document.querySelector<HTMLElement>('#lastWordsPerMinute')!;
+const lastRecordingWordsEl = document.querySelector<HTMLElement>('#lastRecordingWords')!;
 const recordOrb = document.querySelector<HTMLElement>('#recordOrb')!;
 const miniWidget = document.querySelector<HTMLElement>('#miniWidget')!;
 const miniStopButton = document.querySelector<HTMLButtonElement>('#miniStop')!;
@@ -185,6 +200,7 @@ renderProvider();
 if (vocabularyInput) vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
 renderHistory();
+renderStats();
 hydrateRewriteFromHistory();
 
 apiKeyInput.addEventListener('change', syncApiKey);
@@ -519,6 +535,7 @@ async function toggleRecording() {
       await transcribeAndPaste();
     }, { once: true });
 
+    recordingStartedAt = Date.now();
     recorder.start();
     setStatus('recording', 'Recording… press shortcut or click stop when done.');
   } catch (error) {
@@ -534,6 +551,7 @@ function pickMimeType() {
 async function transcribeAndPaste() {
   try {
     setStatus('working', `Transcribing with ${providerLabel()} and pasting into the focused app…`);
+    const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
     const blob = new Blob(chunks, { type: 'audio/webm' });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
 
@@ -544,14 +562,15 @@ async function transcribeAndPaste() {
       vocabularyPrompt: buildVocabularyPrompt(),
     });
 
-    addHistory(text);
+    const stats = addHistory(text, durationMs);
     rewriteInput.value = text;
-    setStatus('success', `Pasted and saved to history: ${text}`);
+    setStatus('success', `Pasted and saved to history: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
   } catch (error) {
     setStatus('error', String(error));
   } finally {
     recorder = null;
     chunks = [];
+    recordingStartedAt = 0;
   }
 }
 
@@ -632,16 +651,34 @@ function saveHistory() {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(historyItems.slice(0, 25)));
 }
 
-function addHistory(text: string) {
+function loadTotalWordsSpoken(items: HistoryItem[]) {
+  const stored = Number(localStorage.getItem(TOTAL_WORDS_KEY));
+  if (Number.isFinite(stored) && stored >= 0) return stored;
+  return items.reduce((sum, item) => sum + wordCount(item.text), 0);
+}
+
+function saveTotalWordsSpoken() {
+  localStorage.setItem(TOTAL_WORDS_KEY, String(totalWordsSpoken));
+}
+
+function addHistory(text: string, durationMs: number) {
+  const words = wordCount(text);
+  const wordsPerMinute = calculateWordsPerMinute(words, durationMs);
   const item: HistoryItem = {
     id: crypto.randomUUID(),
     text,
     createdAt: new Date().toISOString(),
+    durationMs,
+    wordsPerMinute,
   };
   historyItems = [item, ...historyItems].slice(0, 25);
   selectedHistoryId = item.id;
+  totalWordsSpoken += words;
   saveHistory();
+  saveTotalWordsSpoken();
   renderHistory();
+  renderStats();
+  return { words, wordsPerMinute };
 }
 
 function attachRewriteToSelected(rewrite: string, mode: RewriteMode) {
@@ -672,6 +709,8 @@ function renderHistory() {
       <div class="history-meta">
         <time>${formatDate(item.createdAt)}</time>
         <span>${wordCount(item.text)} words</span>
+        ${item.wordsPerMinute ? `<span>${item.wordsPerMinute} WPM</span>` : ''}
+        ${item.durationMs ? `<span>${formatDuration(item.durationMs)}</span>` : ''}
       </div>
       <div class="history-body">
         <p>${escapeHtml(item.text)}</p>
@@ -715,6 +754,25 @@ function formatDate(value: string) {
 
 function wordCount(value: string) {
   return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function calculateWordsPerMinute(words: number, durationMs: number) {
+  if (!words || !durationMs) return 0;
+  return Math.max(1, Math.round(words / (durationMs / 60000)));
+}
+
+function formatDuration(durationMs: number) {
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function renderStats() {
+  const latest = historyItems[0];
+  totalWordsSpokenEl.textContent = numberFormatter.format(totalWordsSpoken);
+  lastWordsPerMinuteEl.textContent = latest?.wordsPerMinute ? String(latest.wordsPerMinute) : '—';
+  lastRecordingWordsEl.textContent = latest ? String(wordCount(latest.text)) : '—';
 }
 
 function escapeHtml(value: string) {

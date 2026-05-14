@@ -12,6 +12,7 @@ Deskflow was created as a desktop-first dictation tool with a clean Flow-style i
 - Desktop microphone capture
 - Automatic transcription and paste into the active app
 - Local transcript history / scratchpad
+- Dictation stats: words per minute, last recording words, and total words spoken
 - Dictionary vocabulary hints for better spelling
 - Rewrite modes for cleaning or reshaping text
 - Provider selection between Groq and ElevenLabs
@@ -119,9 +120,25 @@ Each transcript card shows:
 
 - timestamp
 - word count
+- words per minute
+- recording duration
 - transcript text
 - Copy action
 - Rewrite action
+
+### Dictation stats
+
+The Home screen summarizes speaking activity locally:
+
+- Total words spoken across saved dictations
+- Last recording speed in words per minute
+- Last recording word count
+
+New recordings save their duration and WPM alongside the transcript. The all-time total is stored locally under:
+
+```txt
+flowDeskTotalWordsSpoken
+```
 
 ### Rewrite modes
 
