@@ -58,6 +58,10 @@ app.innerHTML = `
           <button class="nav-item" data-view="transforms" type="button"><span>✦</span>Polish text</button>
         </nav>
 
+        <div class="rail-footer">
+          <button id="settingsButton" class="nav-item" type="button" aria-expanded="false"><span>⚙</span>Settings</button>
+        </div>
+
       </aside>
 
       <section class="content-shell">
