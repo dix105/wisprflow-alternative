@@ -186,6 +186,8 @@ kbd { display: inline-flex; min-width: 25px; justify-content: center; margin: 0 
 .transform-card textarea { min-height: 230px; resize: vertical; }
 .rewrite-output { min-height: 230px; border: 1px solid #e3dfd6; border-radius: 10px; padding: 14px; background: #fbfaf7; white-space: pre-wrap; color: #191816; }
 .rewrite-output.empty { color: #9b9488; }
+.shortcut-hint { margin: -4px 0 12px; color: #7d766c; font-size: 12px; font-weight: 700; }
+.shortcut-hint kbd { min-width: auto; margin: 0 2px; padding: 2px 6px; font-size: 11px; background: #f4f2ed; }
 .rewrite-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .rewrite-actions button { border: 1px solid #e3dfd6; border-radius: 8px; background: #fff; padding: 9px 11px; font-weight: 750; }
 

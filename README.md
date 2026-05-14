@@ -153,7 +153,7 @@ llama-3.3-70b-versatile
 Modes:
 
 - Clean up
-- Polish writing
+- Polish writing (`Cmd/Ctrl + Enter` inside the rewrite input)
 - Professional
 - Shorter
 - Friendly
