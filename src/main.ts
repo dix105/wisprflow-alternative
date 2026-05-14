@@ -14,6 +14,8 @@ const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 const AUDIO_DUCKING_KEY = 'flowDeskAudioDucking';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
+const SHORTCUT_TOGGLE_DEBOUNCE_MS = 900;
+const AUDIO_RESTORE_DELAY_MS = 1200;
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
@@ -40,6 +42,8 @@ let transcriptionProvider = (localStorage.getItem(PROVIDER_KEY) as Transcription
 let historyItems: HistoryItem[] = loadHistory();
 let selectedHistoryId = historyItems[0]?.id || '';
 let recordingStartedAt = 0;
+let lastRecordingToggleAt = 0;
+let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
 let audioDuckingEnabled = localStorage.getItem(AUDIO_DUCKING_KEY) === 'true';
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
@@ -640,6 +644,10 @@ async function polishSelectedText() {
 }
 
 async function toggleRecording() {
+  const now = Date.now();
+  if (now - lastRecordingToggleAt < SHORTCUT_TOGGLE_DEBOUNCE_MS) return;
+  lastRecordingToggleAt = now;
+
   if (recorder && recorder.state === 'recording') {
     recorder.stop();
     return;
@@ -658,8 +666,9 @@ async function toggleRecording() {
       await invoke('pause_background_media');
     }
 
-    if (audioDuckingEnabled && isTauriRuntime) {
+    if (audioDuckingEnabled && isTauriRuntime && !isAudioDucked) {
       await invoke('start_audio_ducking');
+      isAudioDucked = true;
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -679,9 +688,7 @@ async function toggleRecording() {
     recorder.start();
     setStatus('recording', 'Recording… press shortcut or click stop when done.');
   } catch (error) {
-    if (audioDuckingEnabled && isTauriRuntime) {
-      await invoke('restore_audio_ducking');
-    }
+    await restoreAudioAfterDelay();
     if (pauseBackgroundMediaEnabled && isTauriRuntime) {
       await invoke('resume_background_media');
     }
@@ -717,13 +724,22 @@ async function transcribeAndPaste() {
     recorder = null;
     chunks = [];
     recordingStartedAt = 0;
-    if (audioDuckingEnabled && isTauriRuntime) {
-      await invoke('restore_audio_ducking');
-    }
+    await restoreAudioAfterDelay();
     if (pauseBackgroundMediaEnabled && isTauriRuntime) {
       await invoke('resume_background_media');
     }
   }
+}
+
+async function restoreAudioAfterDelay() {
+  if (!audioDuckingEnabled || !isTauriRuntime || !isAudioDucked) return;
+  await sleep(AUDIO_RESTORE_DELAY_MS);
+  await invoke('restore_audio_ducking');
+  isAudioDucked = false;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function rewriteCurrentText(mode: RewriteMode) {
