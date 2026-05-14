@@ -16,6 +16,7 @@ const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const AUDIO_RESTORE_DELAY_MS = 150;
 const RECORDING_TOGGLE_DEBOUNCE_MS = 900;
+const PUSH_TO_TALK_RELEASE_CONFIRM_MS = 140;
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
@@ -575,6 +576,9 @@ async function installShortcut(next: string) {
     }
 
     try {
+      if (shortcut && await isRegistered(shortcut)) {
+        await unregister(shortcut);
+      }
       await invoke('install_push_to_talk_hook', { shortcut: next });
       shortcut = next;
       localStorage.setItem('shortcut', next);
@@ -668,7 +672,11 @@ function startRecordingFromPushToTalk() {
   toggleRecording();
 }
 
-function stopRecordingFromPushToTalk() {
+async function stopRecordingFromPushToTalk() {
+  await sleep(PUSH_TO_TALK_RELEASE_CONFIRM_MS);
+  const stillPressed = await invoke<boolean>('is_push_to_talk_pressed');
+  if (stillPressed) return;
+
   if (recorder?.state === 'recording') {
     recorder.stop();
     return;

@@ -419,6 +419,29 @@ fn shortcut_part_vk(part: &str) -> Option<u32> {
     }
 }
 
+
+#[tauri::command]
+fn is_push_to_talk_pressed() -> bool {
+    #[cfg(not(windows))]
+    {
+        false
+    }
+
+    #[cfg(windows)]
+    {
+        HOOK_STATE
+            .get()
+            .and_then(|state| state.lock().ok())
+            .map(|guard| guard.shortcut_keys.iter().all(|key| is_key_physically_down(*key as i32)))
+            .unwrap_or(false)
+    }
+}
+
+#[cfg(windows)]
+fn is_key_physically_down(vk: i32) -> bool {
+    unsafe { (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(vk) & 0x8000u16 as i16) != 0 }
+}
+
 #[tauri::command]
 fn pause_background_media() {
     send_media_play_pause();
@@ -663,6 +686,7 @@ pub fn run() {
             paste_transcript,
             copy_selected_text,
             install_push_to_talk_hook,
+            is_push_to_talk_pressed,
             start_audio_ducking,
             restore_audio_ducking,
             pause_background_media,
