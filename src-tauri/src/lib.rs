@@ -223,6 +223,7 @@ async fn rewrite_text(api_key: String, text: String, mode: String) -> Result<Str
     }
 
     let instruction = match mode.as_str() {
+        "polish" => "Polish this written text. Fix grammar, punctuation, spelling, clarity, and sentence flow while preserving the original voice, tone, and meaning. Do not make it more formal unless needed.",
         "professional" => "Rewrite the text to sound clear, polished, and professional. Preserve the meaning.",
         "shorter" => "Make the text shorter and punchier. Preserve the core meaning.",
         "friendly" => "Rewrite the text to sound warm, friendly, and natural. Preserve the meaning.",

@@ -153,11 +153,12 @@ llama-3.3-70b-versatile
 Modes:
 
 - Clean up
+- Polish writing
 - Professional
 - Shorter
 - Friendly
 
-These are used to clean dictation artifacts, improve grammar, or reshape tone.
+These are used to clean dictation artifacts, polish written text, improve grammar, or reshape tone.
 
 ## Tech stack
 
