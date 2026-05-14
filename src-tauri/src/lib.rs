@@ -16,7 +16,8 @@ use windows::Win32::{
     Media::Audio::Endpoints::IAudioEndpointVolume,
     System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
     UI::Input::KeyboardAndMouse::{
-        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_MEDIA_PLAY_PAUSE,
+        keybd_event, GetAsyncKeyState, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_MEDIA_PLAY_PAUSE,
+        VK_MENU, VK_RETURN, VK_SHIFT, VK_SPACE,
     },
 };
 
@@ -290,6 +291,38 @@ async fn rewrite_text(api_key: String, text: String, mode: String) -> Result<Str
 
 
 
+
+#[tauri::command]
+fn is_shortcut_pressed(shortcut: String) -> bool {
+    #[cfg(not(windows))]
+    {
+        let _ = shortcut;
+        false
+    }
+
+    #[cfg(windows)]
+    {
+        shortcut.split('+').all(|part| {
+            shortcut_part_vk(part.trim())
+                .map(|vk| unsafe { (GetAsyncKeyState(vk) & 0x8000u16 as i16) != 0 })
+                .unwrap_or(false)
+        })
+    }
+}
+
+#[cfg(windows)]
+fn shortcut_part_vk(part: &str) -> Option<i32> {
+    match part {
+        "CommandOrControl" | "Control" | "Ctrl" => Some(VK_CONTROL.0 as i32),
+        "Alt" => Some(VK_MENU.0 as i32),
+        "Shift" => Some(VK_SHIFT.0 as i32),
+        "Space" => Some(VK_SPACE.0 as i32),
+        "Enter" | "Return" => Some(VK_RETURN.0 as i32),
+        key if key.len() == 1 => key.chars().next().map(|char| char.to_ascii_uppercase() as i32),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 fn pause_background_media() {
     send_media_play_pause();
@@ -533,6 +566,7 @@ pub fn run() {
             rewrite_text,
             paste_transcript,
             copy_selected_text,
+            is_shortcut_pressed,
             start_audio_ducking,
             restore_audio_ducking,
             pause_background_media,

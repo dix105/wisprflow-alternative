@@ -11,11 +11,9 @@ const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
 const SARVAM_KEY = 'sarvamApiKey';
 const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
-const AUDIO_DUCKING_KEY = 'flowDeskAudioDucking';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
-const SHORTCUT_RELEASE_QUIET_MS = 900;
-const AUDIO_RESTORE_DELAY_MS = 1200;
+const AUDIO_RESTORE_DELAY_MS = 150;
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
@@ -43,10 +41,10 @@ let historyItems: HistoryItem[] = loadHistory();
 let selectedHistoryId = historyItems[0]?.id || '';
 let recordingStartedAt = 0;
 let recordingShortcutLocked = false;
-let recordingShortcutUnlockTimer: number | null = null;
+let shortcutReleaseWatcher: number | null = null;
 let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
-let audioDuckingEnabled = localStorage.getItem(AUDIO_DUCKING_KEY) === 'true';
+let audioDuckingEnabled = true;
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
 const numberFormatter = new Intl.NumberFormat();
@@ -176,7 +174,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" type="button">☷ General</button><button type="button">▭ System</button><button type="button"># Vibe coding</button><button type="button">⚗ Experimental</button><hr><p>ACCOUNT</p><button type="button">◎ Account</button><button type="button">♙ Team</button><button type="button">▰ Plans and Billing</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Hold shortcut and speak</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Smooth volume ducking</strong><span>Fade system audio down while recording, then restore it after.</span></div><input id="audioDucking" type="checkbox" /></label><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Hold shortcut and speak</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
       </section>
     </aside>
 
@@ -206,7 +204,6 @@ const closeSettingsButton = document.querySelector<HTMLButtonElement>('#closeSet
 const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')!;
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
-const audioDuckingInput = document.querySelector<HTMLInputElement>('#audioDucking')!;
 const pauseBackgroundMediaInput = document.querySelector<HTMLInputElement>('#pauseBackgroundMedia')!;
 const statusBox = document.querySelector<HTMLElement>('#status')!;
 const totalWordsSpokenEl = document.querySelector<HTMLElement>('#totalWordsSpoken')!;
@@ -233,7 +230,6 @@ renderShortcut(shortcut);
 renderPolishShortcut(polishShortcut);
 renderHistory();
 renderStats();
-audioDuckingInput.checked = audioDuckingEnabled;
 pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
 hydrateRewriteFromHistory();
 
@@ -342,12 +338,6 @@ window.addEventListener('keyup', (event) => {
   updateShortcutModifierState(event, false);
   renderShortcutPreview();
 }, true);
-
-audioDuckingInput.addEventListener('change', () => {
-  audioDuckingEnabled = audioDuckingInput.checked;
-  localStorage.setItem(AUDIO_DUCKING_KEY, String(audioDuckingEnabled));
-  setStatus('success', audioDuckingEnabled ? 'Smooth volume ducking enabled.' : 'Smooth volume ducking disabled.');
-});
 
 pauseBackgroundMediaInput.addEventListener('change', () => {
   pauseBackgroundMediaEnabled = pauseBackgroundMediaInput.checked;
@@ -645,22 +635,26 @@ async function polishSelectedText() {
 }
 
 function handleRecordingShortcut() {
-  if (recordingShortcutLocked) {
-    armRecordingShortcutUnlock();
-    return;
-  }
-
+  if (recordingShortcutLocked) return;
   recordingShortcutLocked = true;
-  armRecordingShortcutUnlock();
   toggleRecording();
+  watchShortcutRelease();
 }
 
-function armRecordingShortcutUnlock() {
-  if (recordingShortcutUnlockTimer) window.clearTimeout(recordingShortcutUnlockTimer);
-  recordingShortcutUnlockTimer = window.setTimeout(() => {
+function watchShortcutRelease() {
+  if (!isTauriRuntime) return;
+  if (shortcutReleaseWatcher) window.clearInterval(shortcutReleaseWatcher);
+
+  shortcutReleaseWatcher = window.setInterval(async () => {
+    const isPressed = await invoke<boolean>('is_shortcut_pressed', { shortcut });
+    if (isPressed) return;
+
+    if (shortcutReleaseWatcher) window.clearInterval(shortcutReleaseWatcher);
+    shortcutReleaseWatcher = null;
     recordingShortcutLocked = false;
-    recordingShortcutUnlockTimer = null;
-  }, SHORTCUT_RELEASE_QUIET_MS);
+
+    if (recorder?.state === 'recording') recorder.stop();
+  }, 80);
 }
 
 async function toggleRecording() {
