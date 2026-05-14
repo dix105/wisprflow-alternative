@@ -9,16 +9,20 @@ const VOCABULARY_KEY = 'flowDeskVocabulary';
 const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
 const SARVAM_KEY = 'sarvamApiKey';
+const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
+const AUDIO_DUCKING_KEY = 'flowDeskAudioDucking';
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
-type RewriteMode = 'clean' | 'professional' | 'shorter' | 'friendly';
+type RewriteMode = 'clean' | 'polish' | 'professional' | 'shorter' | 'friendly';
 type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam';
 
 type HistoryItem = {
   id: string;
   text: string;
   createdAt: string;
+  durationMs?: number;
+  wordsPerMinute?: number;
   rewrite?: string;
   rewriteMode?: RewriteMode;
 };
@@ -31,7 +35,11 @@ let pressedShortcutModifiers = new Set<string>();
 let transcriptionProvider = (localStorage.getItem(PROVIDER_KEY) as TranscriptionProvider) || 'groq';
 let historyItems: HistoryItem[] = loadHistory();
 let selectedHistoryId = historyItems[0]?.id || '';
+let recordingStartedAt = 0;
+let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
+let audioDuckingEnabled = localStorage.getItem(AUDIO_DUCKING_KEY) === 'true';
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
+const numberFormatter = new Intl.NumberFormat();
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -47,6 +55,7 @@ app.innerHTML = `
         <nav class="nav-list" aria-label="Primary">
           <button class="nav-item active" data-view="dictation" type="button"><span>⌘</span>Home</button>
           <button class="nav-item" data-view="scratchpad" type="button"><span>▤</span>Scratchpad</button>
+          <button class="nav-item" data-view="transforms" type="button"><span>✦</span>Polish text</button>
         </nav>
 
       </aside>
@@ -71,6 +80,12 @@ app.innerHTML = `
               <div class="wave-card"><span></span><span></span><span></span><span></span><span></span></div>
             </div>
           </article>
+
+          <section class="stats-strip" aria-label="Dictation stats">
+            <article><span>Total words spoken</span><strong id="totalWordsSpoken">0</strong><small>Across saved dictations</small></article>
+            <article><span>Average speed</span><strong id="averageWordsPerMinute">—</strong><small>Words per minute</small></article>
+            <article><span>Average words</span><strong id="averageWordsPerRecording">—</strong><small>Per recording</small></article>
+          </section>
 
           <section class="home-grid">
             <article class="setup-card hotkey-card">
@@ -114,12 +129,12 @@ app.innerHTML = `
 
         <section class="view-panel" data-panel="style">
           <header class="page-head"><div><h1>Style</h1><p>Choose how your dictated text should sound after cleanup.</p></div></header>
-          <section class="style-grid"><article><strong>Professional</strong><p>Clear, polished, business-friendly.</p></article><article><strong>Friendly</strong><p>Warm, direct, conversational.</p></article><article><strong>Short</strong><p>Compressed and action-oriented.</p></article></section>
+          <section class="style-grid"><article><strong>Polished writing</strong><p>Fix grammar, punctuation, and flow without changing your voice.</p></article><article><strong>Professional</strong><p>Clear, polished, business-friendly.</p></article><article><strong>Friendly</strong><p>Warm, direct, conversational.</p></article><article><strong>Short</strong><p>Compressed and action-oriented.</p></article></section>
         </section>
 
         <section class="view-panel" data-panel="transforms">
           <header class="page-head"><div><h1>Transforms</h1><p>Convert rough speech into useful formats.</p></div></header>
-          <section class="rewrite-layout"><article class="transform-card"><div class="section-heading"><p class="eyebrow">Rewrite input</p><h2>Clean up rough dictation</h2></div><textarea id="rewriteInput" placeholder="Record something or paste text here..."></textarea><div class="rewrite-actions"><button data-rewrite="clean" type="button">Clean up</button><button data-rewrite="professional" type="button">Professional</button><button data-rewrite="shorter" type="button">Shorter</button><button data-rewrite="friendly" type="button">Friendly</button></div></article><article class="transform-card"><div class="section-heading"><p class="eyebrow">Output</p><h2>Ready text</h2></div><div id="rewriteOutput" class="rewrite-output empty">Your rewritten text will appear here.</div><div class="promo-actions"><button id="copyRewrite" type="button">Copy</button><button id="pasteRewrite" class="primary-btn" type="button"><span class="button-dot"></span>Paste</button></div></article></section>
+          <section class="rewrite-layout"><article class="transform-card"><div class="section-heading"><p class="eyebrow">Rewrite input</p><h2>Clean up rough dictation</h2></div><textarea id="rewriteInput" placeholder="Record something or paste text here..."></textarea><div class="shortcut-hint">Press <kbd>Cmd/Ctrl</kbd> + <kbd>Enter</kbd> to polish writing</div><div class="rewrite-actions"><button data-rewrite="clean" type="button">Clean up</button><button data-rewrite="polish" type="button">Polish writing</button><button data-rewrite="professional" type="button">Professional</button><button data-rewrite="shorter" type="button">Shorter</button><button data-rewrite="friendly" type="button">Friendly</button></div></article><article class="transform-card"><div class="section-heading"><p class="eyebrow">Output</p><h2>Ready text</h2></div><div id="rewriteOutput" class="rewrite-output empty">Your rewritten text will appear here.</div><div class="promo-actions"><button id="copyRewrite" type="button">Copy</button><button id="pasteRewrite" class="primary-btn" type="button"><span class="button-dot"></span>Paste</button></div></article></section>
         </section>
 
         <section class="view-panel" data-panel="scratchpad">
@@ -139,7 +154,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" type="button">☷ General</button><button type="button">▭ System</button><button type="button"># Vibe coding</button><button type="button">⚗ Experimental</button><hr><p>ACCOUNT</p><button type="button">◎ Account</button><button type="button">♙ Team</button><button type="button">▰ Plans and Billing</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Shortcuts</strong><span>Hold shortcut and speak</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Shortcuts</strong><span>Hold shortcut and speak</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Smooth volume ducking</strong><span>Fade system audio down while recording, then restore it after.</span></div><input id="audioDucking" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
       </section>
     </aside>
 
@@ -165,7 +180,11 @@ const closeSettingsButton = document.querySelector<HTMLButtonElement>('#closeSet
 const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')!;
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
+const audioDuckingInput = document.querySelector<HTMLInputElement>('#audioDucking')!;
 const statusBox = document.querySelector<HTMLElement>('#status')!;
+const totalWordsSpokenEl = document.querySelector<HTMLElement>('#totalWordsSpoken')!;
+const averageWordsPerMinuteEl = document.querySelector<HTMLElement>('#averageWordsPerMinute')!;
+const averageWordsPerRecordingEl = document.querySelector<HTMLElement>('#averageWordsPerRecording')!;
 const recordOrb = document.querySelector<HTMLElement>('#recordOrb')!;
 const miniWidget = document.querySelector<HTMLElement>('#miniWidget')!;
 const miniStopButton = document.querySelector<HTMLButtonElement>('#miniStop')!;
@@ -185,6 +204,8 @@ renderProvider();
 if (vocabularyInput) vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
 renderHistory();
+renderStats();
+audioDuckingInput.checked = audioDuckingEnabled;
 hydrateRewriteFromHistory();
 
 apiKeyInput.addEventListener('change', syncApiKey);
@@ -291,6 +312,12 @@ window.addEventListener('keyup', (event) => {
   renderShortcutPreview();
 }, true);
 
+audioDuckingInput.addEventListener('change', () => {
+  audioDuckingEnabled = audioDuckingInput.checked;
+  localStorage.setItem(AUDIO_DUCKING_KEY, String(audioDuckingEnabled));
+  setStatus('success', audioDuckingEnabled ? 'Smooth volume ducking enabled.' : 'Smooth volume ducking disabled.');
+});
+
 autostartInput.addEventListener('change', async () => {
   try {
     if (autostartInput.checked) {
@@ -308,6 +335,13 @@ autostartInput.addEventListener('change', async () => {
 
 document.querySelectorAll<HTMLButtonElement>('[data-rewrite]').forEach((button) => {
   button.addEventListener('click', () => rewriteCurrentText(button.dataset.rewrite as RewriteMode));
+});
+
+rewriteInput.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    event.preventDefault();
+    rewriteCurrentText('polish');
+  }
 });
 
 copyRewriteButton.addEventListener('click', async () => {
@@ -506,6 +540,10 @@ async function toggleRecording() {
       return;
     }
 
+    if (audioDuckingEnabled && isTauriRuntime) {
+      await invoke('start_audio_ducking');
+    }
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     chunks = [];
     recorder = new MediaRecorder(stream, { mimeType: pickMimeType() });
@@ -519,6 +557,7 @@ async function toggleRecording() {
       await transcribeAndPaste();
     }, { once: true });
 
+    recordingStartedAt = Date.now();
     recorder.start();
     setStatus('recording', 'Recording… press shortcut or click stop when done.');
   } catch (error) {
@@ -534,6 +573,7 @@ function pickMimeType() {
 async function transcribeAndPaste() {
   try {
     setStatus('working', `Transcribing with ${providerLabel()} and pasting into the focused app…`);
+    const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
     const blob = new Blob(chunks, { type: 'audio/webm' });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
 
@@ -544,14 +584,18 @@ async function transcribeAndPaste() {
       vocabularyPrompt: buildVocabularyPrompt(),
     });
 
-    addHistory(text);
+    const stats = addHistory(text, durationMs);
     rewriteInput.value = text;
-    setStatus('success', `Pasted and saved to history: ${text}`);
+    setStatus('success', `Pasted and saved to history: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
   } catch (error) {
     setStatus('error', String(error));
   } finally {
     recorder = null;
     chunks = [];
+    recordingStartedAt = 0;
+    if (audioDuckingEnabled && isTauriRuntime) {
+      await invoke('restore_audio_ducking');
+    }
   }
 }
 
@@ -632,16 +676,34 @@ function saveHistory() {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(historyItems.slice(0, 25)));
 }
 
-function addHistory(text: string) {
+function loadTotalWordsSpoken(items: HistoryItem[]) {
+  const stored = Number(localStorage.getItem(TOTAL_WORDS_KEY));
+  if (Number.isFinite(stored) && stored >= 0) return stored;
+  return items.reduce((sum, item) => sum + wordCount(item.text), 0);
+}
+
+function saveTotalWordsSpoken() {
+  localStorage.setItem(TOTAL_WORDS_KEY, String(totalWordsSpoken));
+}
+
+function addHistory(text: string, durationMs: number) {
+  const words = wordCount(text);
+  const wordsPerMinute = calculateWordsPerMinute(words, durationMs);
   const item: HistoryItem = {
     id: crypto.randomUUID(),
     text,
     createdAt: new Date().toISOString(),
+    durationMs,
+    wordsPerMinute,
   };
   historyItems = [item, ...historyItems].slice(0, 25);
   selectedHistoryId = item.id;
+  totalWordsSpoken += words;
   saveHistory();
+  saveTotalWordsSpoken();
   renderHistory();
+  renderStats();
+  return { words, wordsPerMinute };
 }
 
 function attachRewriteToSelected(rewrite: string, mode: RewriteMode) {
@@ -672,6 +734,8 @@ function renderHistory() {
       <div class="history-meta">
         <time>${formatDate(item.createdAt)}</time>
         <span>${wordCount(item.text)} words</span>
+        ${item.wordsPerMinute ? `<span>${item.wordsPerMinute} WPM</span>` : ''}
+        ${item.durationMs ? `<span>${formatDuration(item.durationMs)}</span>` : ''}
       </div>
       <div class="history-body">
         <p>${escapeHtml(item.text)}</p>
@@ -715,6 +779,45 @@ function formatDate(value: string) {
 
 function wordCount(value: string) {
   return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function calculateWordsPerMinute(words: number, durationMs: number) {
+  if (!words || !durationMs) return 0;
+  return Math.max(1, Math.round(words / (durationMs / 60000)));
+}
+
+function formatDuration(durationMs: number) {
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function renderStats() {
+  totalWordsSpokenEl.textContent = numberFormatter.format(totalWordsSpoken);
+  averageWordsPerMinuteEl.textContent = formatOptionalNumber(averageWordsPerMinute(historyItems));
+  averageWordsPerRecordingEl.textContent = formatOptionalNumber(averageWordsPerRecording(historyItems));
+}
+
+function averageWordsPerMinute(items: HistoryItem[]) {
+  const totals = items.reduce((acc, item) => {
+    const words = wordCount(item.text);
+    const durationMs = item.durationMs || 0;
+    if (!words || !durationMs) return acc;
+    return { words: acc.words + words, durationMs: acc.durationMs + durationMs };
+  }, { words: 0, durationMs: 0 });
+
+  return calculateWordsPerMinute(totals.words, totals.durationMs);
+}
+
+function averageWordsPerRecording(items: HistoryItem[]) {
+  if (!items.length) return 0;
+  const words = items.reduce((sum, item) => sum + wordCount(item.text), 0);
+  return Math.round(words / items.length);
+}
+
+function formatOptionalNumber(value: number) {
+  return value ? numberFormatter.format(value) : '—';
 }
 
 function escapeHtml(value: string) {

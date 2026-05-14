@@ -12,6 +12,8 @@ Deskflow was created as a desktop-first dictation tool with a clean Flow-style i
 - Desktop microphone capture
 - Automatic transcription and paste into the active app
 - Local transcript history / scratchpad
+- Dictation stats: words per minute, average words, and total words spoken
+- Optional smooth audio ducking that lowers system volume during recording and restores it after
 - Dictionary vocabulary hints for better spelling
 - Rewrite modes for cleaning or reshaping text
 - Provider selection between Groq and ElevenLabs
@@ -119,9 +121,33 @@ Each transcript card shows:
 
 - timestamp
 - word count
+- words per minute
+- recording duration
 - transcript text
 - Copy action
 - Rewrite action
+
+### Smooth volume ducking
+
+The Settings drawer includes **Smooth volume ducking**. When enabled, Deskflow sends smooth volume-down steps when recording starts and matching volume-up steps after transcription finishes. This is intended to reduce background audio while speaking. The preference is stored locally under:
+
+```txt
+flowDeskAudioDucking
+```
+
+### Dictation stats
+
+The Home screen summarizes speaking activity locally:
+
+- Total words spoken across saved dictations
+- Average speed in words per minute
+- Average words per recording
+
+New recordings save their duration and WPM alongside the transcript. The all-time total is stored locally under:
+
+```txt
+flowDeskTotalWordsSpoken
+```
 
 ### Rewrite modes
 
@@ -136,11 +162,12 @@ llama-3.3-70b-versatile
 Modes:
 
 - Clean up
+- Polish writing (`Cmd/Ctrl + Enter` inside the rewrite input)
 - Professional
 - Shorter
 - Friendly
 
-These are used to clean dictation artifacts, improve grammar, or reshape tone.
+These are used to clean dictation artifacts, polish written text, improve grammar, or reshape tone.
 
 ## Tech stack
 
