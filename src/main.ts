@@ -239,6 +239,19 @@ pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
 hydrateRewriteFromHistory();
 setupPushToTalkListeners();
 
+// Load full history from disk (async, replaces localStorage snapshot)
+(async () => {
+  const diskHistory = await loadHistoryFromDisk();
+  if (diskHistory.length > 0) {
+    historyItems = diskHistory;
+    selectedHistoryId = historyItems[0]?.id || '';
+    totalWordsSpoken = loadTotalWordsSpoken(historyItems);
+    renderHistory();
+    renderStats();
+    hydrateRewriteFromHistory();
+  }
+})();
+
 apiKeyInput.addEventListener('change', syncApiKey);
 drawerApiKeyInput.addEventListener('change', syncApiKey);
 elevenLabsApiKeyInput.addEventListener('change', syncElevenLabsKey);
@@ -873,6 +886,7 @@ function buildVocabularyPrompt() {
 }
 
 function loadHistory(): HistoryItem[] {
+  // Synchronous fallback from localStorage; async disk load happens in init
   try {
     return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
   } catch {
@@ -880,8 +894,48 @@ function loadHistory(): HistoryItem[] {
   }
 }
 
+async function loadHistoryFromDisk(): Promise<HistoryItem[]> {
+  if (!isTauriRuntime) return loadHistory();
+  try {
+    const records: HistoryItem[] = await invoke('load_transcripts');
+    return records;
+  } catch (e) {
+    console.warn('Failed to load transcripts from disk, falling back to localStorage', e);
+    return loadHistory();
+  }
+}
+
 function saveHistory() {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(historyItems.slice(0, 25)));
+  // Keep localStorage as quick cache
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(historyItems.slice(0, 50)));
+}
+
+async function saveTranscriptToDisk(item: HistoryItem) {
+  if (!isTauriRuntime) return;
+  try {
+    await invoke('save_transcript', {
+      record: {
+        id: item.id,
+        text: item.text,
+        createdAt: item.createdAt,
+        durationMs: item.durationMs ?? 0,
+        wordsPerMinute: item.wordsPerMinute ?? 0,
+        rewrite: item.rewrite ?? null,
+        rewriteMode: item.rewriteMode ?? null,
+      },
+    });
+  } catch (e) {
+    console.warn('Failed to save transcript to disk', e);
+  }
+}
+
+async function deleteTranscriptFromDisk(id: string) {
+  if (!isTauriRuntime) return;
+  try {
+    await invoke('delete_transcript', { id });
+  } catch (e) {
+    console.warn('Failed to delete transcript from disk', e);
+  }
 }
 
 function loadTotalWordsSpoken(items: HistoryItem[]) {
@@ -904,10 +958,11 @@ function addHistory(text: string, durationMs: number) {
     durationMs,
     wordsPerMinute,
   };
-  historyItems = [item, ...historyItems].slice(0, 25);
+  historyItems = [item, ...historyItems];
   selectedHistoryId = item.id;
   totalWordsSpoken += words;
   saveHistory();
+  saveTranscriptToDisk(item);
   saveTotalWordsSpoken();
   renderHistory();
   renderStats();
@@ -919,6 +974,8 @@ function attachRewriteToSelected(rewrite: string, mode: RewriteMode) {
   if (!id) return;
   historyItems = historyItems.map((item) => item.id === id ? { ...item, rewrite, rewriteMode: mode } : item);
   saveHistory();
+  const updated = historyItems.find((item) => item.id === id);
+  if (updated) saveTranscriptToDisk(updated);
   renderHistory();
 }
 

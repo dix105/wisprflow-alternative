@@ -1,9 +1,9 @@
 use arboard::Clipboard;
 use reqwest::multipart::{Form, Part};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::{collections::HashSet, sync::{Mutex, OnceLock, atomic::{AtomicBool, Ordering}}};
-use std::{thread, time::Duration};
+use std::{fs, path::PathBuf, thread, time::Duration};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -618,6 +618,81 @@ fn send_ctrl_v() {
     }
 }
 
+// --------------- File-system transcript persistence ---------------
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TranscriptRecord {
+    id: String,
+    text: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "durationMs")]
+    duration_ms: f64,
+    #[serde(rename = "wordsPerMinute")]
+    words_per_minute: f64,
+    rewrite: Option<String>,
+    #[serde(rename = "rewriteMode")]
+    rewrite_mode: Option<String>,
+}
+
+fn transcripts_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    let dir = base.join("transcripts");
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create transcripts dir: {e}"))?;
+    Ok(dir)
+}
+
+#[tauri::command]
+fn save_transcript(app: tauri::AppHandle, record: TranscriptRecord) -> Result<(), String> {
+    let dir = transcripts_dir(&app)?;
+    let path = dir.join(format!("{}.json", record.id));
+    let json = serde_json::to_string_pretty(&record)
+        .map_err(|e| format!("JSON serialization error: {e}"))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to write transcript: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_transcripts(app: tauri::AppHandle) -> Result<Vec<TranscriptRecord>, String> {
+    let dir = transcripts_dir(&app)?;
+    let mut records: Vec<TranscriptRecord> = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read transcripts dir: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            if let Ok(contents) = fs::read_to_string(&path) {
+                if let Ok(rec) = serde_json::from_str::<TranscriptRecord>(&contents) {
+                    records.push(rec);
+                }
+            }
+        }
+    }
+    // newest first
+    records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(records)
+}
+
+#[tauri::command]
+fn delete_transcript(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let dir = transcripts_dir(&app)?;
+    let path = dir.join(format!("{id}.json"));
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("Failed to delete transcript: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_transcripts_path(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = transcripts_dir(&app)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+// ------------------------------------------------------------------
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -685,6 +760,10 @@ pub fn run() {
             rewrite_text,
             paste_transcript,
             copy_selected_text,
+            save_transcript,
+            load_transcripts,
+            delete_transcript,
+            get_transcripts_path,
             install_push_to_talk_hook,
             is_push_to_talk_pressed,
             start_audio_ducking,
