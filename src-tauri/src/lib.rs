@@ -62,6 +62,26 @@ struct SarvamTranscription {
 }
 
 #[derive(Debug, Deserialize)]
+struct DeepgramResponse {
+    results: DeepgramResults,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepgramResults {
+    channels: Vec<DeepgramChannel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepgramChannel {
+    alternatives: Vec<DeepgramAlternative>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepgramAlternative {
+    transcript: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct GroqChatResponse {
     choices: Vec<GroqChatChoice>,
 }
@@ -87,6 +107,7 @@ async fn transcribe_and_paste(
     let text = match provider.as_str() {
         "elevenlabs" => transcribe_with_elevenlabs(api_key, audio_bytes).await?,
         "sarvam" => transcribe_with_sarvam(api_key, audio_bytes).await?,
+        "deepgram" => transcribe_with_deepgram(api_key, audio_bytes).await?,
         _ => transcribe_with_groq(api_key, audio_bytes, vocabulary_prompt).await?,
     };
 
@@ -238,6 +259,47 @@ async fn transcribe_with_sarvam(api_key: String, audio_bytes: Vec<u8>) -> Result
 
     if text.is_empty() {
         return Err("Sarvam returned an empty transcript".into());
+    }
+
+    Ok(text)
+}
+
+async fn transcribe_with_deepgram(api_key: String, audio_bytes: Vec<u8>) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Missing Deepgram API key".into());
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en")
+        .header("Authorization", format!("Token {}", api_key.trim()))
+        .header("Content-Type", "audio/webm")
+        .body(audio_bytes)
+        .send()
+        .await
+        .map_err(|e| format!("Deepgram request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Deepgram API error {status}: {body}"));
+    }
+
+    let dg_response: DeepgramResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse Deepgram response: {e}"))?;
+
+    let text = dg_response
+        .results
+        .channels
+        .first()
+        .and_then(|ch| ch.alternatives.first())
+        .map(|alt| alt.transcript.trim().to_string())
+        .unwrap_or_default();
+
+    if text.is_empty() {
+        return Err("Deepgram returned an empty transcript".into());
     }
 
     Ok(text)

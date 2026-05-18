@@ -11,6 +11,7 @@ const VOCABULARY_KEY = 'flowDeskVocabulary';
 const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
 const SARVAM_KEY = 'sarvamApiKey';
+const DEEPGRAM_KEY = 'deepgramApiKey';
 const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
@@ -21,7 +22,7 @@ const PUSH_TO_TALK_RELEASE_CONFIRM_MS = 140;
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
 type RewriteMode = 'clean' | 'polish' | 'professional' | 'shorter' | 'friendly';
-type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam';
+type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam' | 'deepgram';
 
 type HistoryItem = {
   id: string;
@@ -141,6 +142,10 @@ app.innerHTML = `
                   <button class="provider-option" data-provider="sarvam" type="button"><strong>Sarvam</strong><span>Saaras v3 speech-to-text</span><em>Make active</em></button>
                   <label class="field compact-field"><span>Sarvam API key</span><input id="sarvamApiKey" type="password" autocomplete="off" placeholder="Sarvam key stored locally" /></label>
                 </div>
+                <div class="provider-row" data-provider-row="deepgram">
+                  <button class="provider-option" data-provider="deepgram" type="button"><strong>Deepgram</strong><span>Nova-3 · fast &amp; accurate STT</span><em>Make active</em></button>
+                  <label class="field compact-field"><span>Deepgram API key</span><input id="deepgramApiKey" type="password" autocomplete="off" placeholder="Deepgram key stored locally" /></label>
+                </div>
               </div>
             </article>
           </section>
@@ -190,6 +195,7 @@ const apiKeyInput = document.querySelector<HTMLInputElement>('#apiKey')!;
 const drawerApiKeyInput = document.querySelector<HTMLInputElement>('#drawerApiKey')!;
 const elevenLabsApiKeyInput = document.querySelector<HTMLInputElement>('#elevenLabsApiKey')!;
 const sarvamApiKeyInput = document.querySelector<HTMLInputElement>('#sarvamApiKey')!;
+const deepgramApiKeyInput = document.querySelector<HTMLInputElement>('#deepgramApiKey')!;
 const activeProviderBadge = document.querySelector<HTMLElement>('#activeProviderBadge')!;
 const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput');
 const saveButton = document.querySelector<HTMLButtonElement>('#save')!;
@@ -229,6 +235,7 @@ apiKeyInput.value = localStorage.getItem('groqApiKey') || '';
 drawerApiKeyInput.value = apiKeyInput.value;
 elevenLabsApiKeyInput.value = localStorage.getItem(ELEVENLABS_KEY) || '';
 sarvamApiKeyInput.value = localStorage.getItem(SARVAM_KEY) || '';
+deepgramApiKeyInput.value = localStorage.getItem(DEEPGRAM_KEY) || '';
 renderProvider();
 if (vocabularyInput) vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
@@ -256,6 +263,7 @@ apiKeyInput.addEventListener('change', syncApiKey);
 drawerApiKeyInput.addEventListener('change', syncApiKey);
 elevenLabsApiKeyInput.addEventListener('change', syncElevenLabsKey);
 sarvamApiKeyInput.addEventListener('change', syncSarvamKey);
+deepgramApiKeyInput.addEventListener('change', syncDeepgramKey);
 vocabularyInput?.addEventListener('input', () => {
   localStorage.setItem(VOCABULARY_KEY, vocabularyInput.value.trim());
 });
@@ -273,6 +281,10 @@ function syncElevenLabsKey() {
 
 function syncSarvamKey() {
   localStorage.setItem(SARVAM_KEY, sarvamApiKeyInput.value.trim());
+}
+
+function syncDeepgramKey() {
+  localStorage.setItem(DEEPGRAM_KEY, deepgramApiKeyInput.value.trim());
 }
 
 function setProvider(provider: TranscriptionProvider) {
@@ -860,6 +872,7 @@ function getRewriteText() {
 function providerName(provider: TranscriptionProvider) {
   if (provider === 'groq') return 'Groq';
   if (provider === 'elevenlabs') return 'ElevenLabs';
+  if (provider === 'deepgram') return 'Deepgram';
   return 'Sarvam';
 }
 
@@ -870,6 +883,7 @@ function providerLabel() {
 function activeTranscriptionKey() {
   if (transcriptionProvider === 'groq') return apiKeyInput.value.trim();
   if (transcriptionProvider === 'elevenlabs') return elevenLabsApiKeyInput.value.trim();
+  if (transcriptionProvider === 'deepgram') return deepgramApiKeyInput.value.trim();
   return sarvamApiKeyInput.value.trim();
 }
 
