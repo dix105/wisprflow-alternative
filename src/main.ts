@@ -257,17 +257,22 @@ hydrateRewriteFromHistory();
 setupPushToTalkListeners();
 
 // Load full history from disk (async, replaces localStorage snapshot)
-(async () => {
-  const diskHistory = await loadHistoryFromDisk();
-  if (diskHistory.length > 0) {
-    historyItems = diskHistory;
-    selectedHistoryId = historyItems[0]?.id || '';
-    totalWordsSpoken = loadTotalWordsSpoken(historyItems);
-    renderHistory();
-    renderStats();
-    hydrateRewriteFromHistory();
+// Wrapped in setTimeout to ensure it never blocks shortcut registration
+setTimeout(async () => {
+  try {
+    const diskHistory = await loadHistoryFromDisk();
+    if (diskHistory.length > 0) {
+      historyItems = diskHistory;
+      selectedHistoryId = historyItems[0]?.id || '';
+      totalWordsSpoken = loadTotalWordsSpoken(historyItems);
+      renderHistory();
+      renderStats();
+      hydrateRewriteFromHistory();
+    }
+  } catch (e) {
+    console.warn('Disk history load failed, using localStorage', e);
   }
-})();
+}, 100);
 
 apiKeyInput.addEventListener('change', syncApiKey);
 drawerApiKeyInput.addEventListener('change', syncApiKey);
@@ -298,7 +303,7 @@ function syncSarvamKey() {
 }
 
 function syncDeepgramKey() {
-  localStorage.setItem(DEEPGRAM_KEY, deepgramApiKeyInput.value.trim());
+  if (deepgramApiKeyInput) localStorage.setItem(DEEPGRAM_KEY, deepgramApiKeyInput.value.trim());
 }
 
 function setProvider(provider: TranscriptionProvider) {
