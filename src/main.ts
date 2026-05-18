@@ -796,7 +796,11 @@ async function toggleRecording() {
 
     recordingStartedAt = Date.now();
     // Use timeslice for streaming (250ms chunks), otherwise collect all
-    recorder.start(streaming ? 250 : undefined);
+    if (streaming) {
+      recorder.start(250);
+    } else {
+      recorder.start();
+    }
     setStatus('recording', 'Recording… release shortcut or click stop when done.');
     if (stopAfterStartRequested) {
       stopAfterStartRequested = false;
@@ -813,8 +817,8 @@ async function toggleRecording() {
   }
 }
 
-function isStreamingActive() {
-  return transcriptionProvider === 'deepgram' && deepgramStreamingEnabled && deepgramApiKeyInput.value.trim();
+function isStreamingActive(): boolean {
+  return transcriptionProvider === 'deepgram' && deepgramStreamingEnabled && !!deepgramApiKeyInput.value.trim();
 }
 
 function openStreamingSocket() {
@@ -825,8 +829,8 @@ function openStreamingSocket() {
   streamingFinalParts = [];
   streamingLastPastedLength = 0;
 
-  const url = `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en&interim_results=true&punctuate=true&encoding=opus&sample_rate=48000`;
-  const ws = new WebSocket(url, ['token', key]);
+  const url = `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en&interim_results=true&punctuate=true&encoding=opus&sample_rate=48000&token=${encodeURIComponent(key)}`;
+  const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
 
   ws.addEventListener('open', () => {
