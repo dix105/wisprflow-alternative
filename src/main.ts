@@ -12,6 +12,7 @@ const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
 const SARVAM_KEY = 'sarvamApiKey';
 const DEEPGRAM_KEY = 'deepgramApiKey';
+const DEEPGRAM_STREAMING_KEY = 'deepgramStreaming';
 const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
@@ -51,6 +52,11 @@ let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
 let audioDuckingEnabled = true;
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
+let deepgramStreamingEnabled = localStorage.getItem(DEEPGRAM_STREAMING_KEY) === 'true';
+let streamingSocket: WebSocket | null = null;
+let streamingTranscript = '';
+let streamingFinalParts: string[] = [];
+let streamingLastPastedLength = 0;
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
 const numberFormatter = new Intl.NumberFormat();
 
@@ -145,6 +151,7 @@ app.innerHTML = `
                 <div class="provider-row" data-provider-row="deepgram">
                   <button class="provider-option" data-provider="deepgram" type="button"><strong>Deepgram</strong><span>Nova-3 · fast &amp; accurate STT</span><em>Make active</em></button>
                   <label class="field compact-field"><span>Deepgram API key</span><input id="deepgramApiKey" type="password" autocomplete="off" placeholder="Deepgram key stored locally" /></label>
+                  <label class="field compact-field streaming-toggle"><span>Live streaming</span><small>Paste words directly as you speak</small><input id="deepgramStreaming" type="checkbox" /></label>
                 </div>
               </div>
             </article>
@@ -188,6 +195,7 @@ app.innerHTML = `
     </aside>
 
     <div id="miniWidget" class="mini-widget" hidden><span class="mini-wave"></span><strong>Recording</strong><button id="miniStop" type="button">Stop</button></div>
+
   </main>
 `;
 
@@ -196,6 +204,7 @@ const drawerApiKeyInput = document.querySelector<HTMLInputElement>('#drawerApiKe
 const elevenLabsApiKeyInput = document.querySelector<HTMLInputElement>('#elevenLabsApiKey')!;
 const sarvamApiKeyInput = document.querySelector<HTMLInputElement>('#sarvamApiKey')!;
 const deepgramApiKeyInput = document.querySelector<HTMLInputElement>('#deepgramApiKey')!;
+const deepgramStreamingInput = document.querySelector<HTMLInputElement>('#deepgramStreaming')!;
 const activeProviderBadge = document.querySelector<HTMLElement>('#activeProviderBadge')!;
 const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput');
 const saveButton = document.querySelector<HTMLButtonElement>('#save')!;
@@ -236,6 +245,7 @@ drawerApiKeyInput.value = apiKeyInput.value;
 elevenLabsApiKeyInput.value = localStorage.getItem(ELEVENLABS_KEY) || '';
 sarvamApiKeyInput.value = localStorage.getItem(SARVAM_KEY) || '';
 deepgramApiKeyInput.value = localStorage.getItem(DEEPGRAM_KEY) || '';
+deepgramStreamingInput.checked = deepgramStreamingEnabled;
 renderProvider();
 if (vocabularyInput) vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
 renderShortcut(shortcut);
@@ -264,6 +274,10 @@ drawerApiKeyInput.addEventListener('change', syncApiKey);
 elevenLabsApiKeyInput.addEventListener('change', syncElevenLabsKey);
 sarvamApiKeyInput.addEventListener('change', syncSarvamKey);
 deepgramApiKeyInput.addEventListener('change', syncDeepgramKey);
+deepgramStreamingInput.addEventListener('change', () => {
+  deepgramStreamingEnabled = deepgramStreamingInput.checked;
+  localStorage.setItem(DEEPGRAM_STREAMING_KEY, String(deepgramStreamingEnabled));
+});
 vocabularyInput?.addEventListener('input', () => {
   localStorage.setItem(VOCABULARY_KEY, vocabularyInput.value.trim());
 });
@@ -741,6 +755,7 @@ async function toggleRecording() {
     syncApiKey();
     syncElevenLabsKey();
     syncSarvamKey();
+    syncDeepgramKey();
     if (!activeTranscriptionKey()) {
       setStatus('error', `Add your ${providerLabel()} API key first.`);
       return;
@@ -759,17 +774,29 @@ async function toggleRecording() {
     chunks = [];
     recorder = new MediaRecorder(stream, { mimeType: pickMimeType() });
 
+    const streaming = isStreamingActive();
+
     recorder.addEventListener('dataavailable', (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
+      if (event.data.size > 0) {
+        chunks.push(event.data);
+        if (streaming) sendAudioChunkToStream(event.data);
+      }
     });
 
     recorder.addEventListener('stop', async () => {
       stream.getTracks().forEach((track) => track.stop());
-      await transcribeAndPaste();
+      if (streaming) {
+        await transcribeStreamingResult();
+      } else {
+        await transcribeAndPaste();
+      }
     }, { once: true });
 
+    if (streaming) openStreamingSocket();
+
     recordingStartedAt = Date.now();
-    recorder.start();
+    // Use timeslice for streaming (250ms chunks), otherwise collect all
+    recorder.start(streaming ? 250 : undefined);
     setStatus('recording', 'Recording… release shortcut or click stop when done.');
     if (stopAfterStartRequested) {
       stopAfterStartRequested = false;
@@ -783,6 +810,117 @@ async function toggleRecording() {
     setStatus('error', `Mic error: ${String(error)}`);
   } finally {
     recordingTransitionInFlight = false;
+  }
+}
+
+function isStreamingActive() {
+  return transcriptionProvider === 'deepgram' && deepgramStreamingEnabled && deepgramApiKeyInput.value.trim();
+}
+
+function openStreamingSocket() {
+  const key = deepgramApiKeyInput.value.trim();
+  if (!key) return;
+
+  streamingTranscript = '';
+  streamingFinalParts = [];
+  streamingLastPastedLength = 0;
+
+  const url = `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en&interim_results=true&punctuate=true&encoding=opus&sample_rate=48000`;
+  const ws = new WebSocket(url, ['token', key]);
+  ws.binaryType = 'arraybuffer';
+
+  ws.addEventListener('open', () => {
+    console.log('[Deepgram WS] connected');
+    setStatus('recording', 'Streaming — words will appear as you speak…');
+  });
+
+  ws.addEventListener('message', (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'Results' && msg.channel?.alternatives?.length) {
+        const alt = msg.channel.alternatives[0];
+        const text = alt.transcript || '';
+        if (msg.is_final && text) {
+          streamingFinalParts.push(text);
+          streamingTranscript = streamingFinalParts.join(' ');
+          // Paste the new delta directly into the focused app
+          const delta = streamingTranscript.substring(streamingLastPastedLength);
+          if (delta && isTauriRuntime) {
+            invoke('paste_transcript', { text: (streamingLastPastedLength > 0 ? ' ' : '') + delta }).catch(() => {});
+          }
+          streamingLastPastedLength = streamingTranscript.length;
+        }
+      }
+    } catch {}
+  });
+
+  ws.addEventListener('error', (e) => {
+    console.error('[Deepgram WS] error', e);
+  });
+
+  ws.addEventListener('close', () => {
+    console.log('[Deepgram WS] closed');
+  });
+
+  streamingSocket = ws;
+}
+
+function sendAudioChunkToStream(data: Blob) {
+  if (streamingSocket && streamingSocket.readyState === WebSocket.OPEN) {
+    data.arrayBuffer().then((buf) => {
+      streamingSocket!.send(buf);
+    });
+  }
+}
+
+async function closeStreamingSocket(): Promise<string> {
+  return new Promise((resolve) => {
+    if (!streamingSocket) {
+      resolve(streamingTranscript.trim());
+      return;
+    }
+    // Send close message to get final results
+    if (streamingSocket.readyState === WebSocket.OPEN) {
+      streamingSocket.send(JSON.stringify({ type: 'CloseStream' }));
+    }
+    // Wait briefly for any remaining final results, then close
+    const timeout = setTimeout(() => {
+      streamingSocket?.close();
+      streamingSocket = null;
+      resolve(streamingTranscript.trim());
+    }, 1500);
+
+    streamingSocket.addEventListener('close', () => {
+      clearTimeout(timeout);
+      streamingSocket = null;
+      resolve(streamingTranscript.trim());
+    }, { once: true });
+  });
+}
+
+async function transcribeStreamingResult() {
+  try {
+    const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
+    setStatus('working', 'Finishing stream…');
+    const text = await closeStreamingSocket();
+
+    if (text) {
+      const stats = addHistory(text, durationMs);
+      rewriteInput.value = text;
+      setStatus('success', `Streamed and pasted: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+    } else {
+      setStatus('error', 'No speech detected during streaming.');
+    }
+  } catch (error) {
+    setStatus('error', String(error));
+  } finally {
+    recorder = null;
+    chunks = [];
+    recordingStartedAt = 0;
+    await restoreAudioAfterDelay();
+    if (pauseBackgroundMediaEnabled && isTauriRuntime) {
+      await invoke('resume_background_media');
+    }
   }
 }
 
@@ -943,6 +1081,8 @@ async function saveTranscriptToDisk(item: HistoryItem) {
   }
 }
 
+// exported for future use (delete from scratchpad)
+// @ts-ignore: will be used when scratchpad delete UI is added
 async function deleteTranscriptFromDisk(id: string) {
   if (!isTauriRuntime) return;
   try {
