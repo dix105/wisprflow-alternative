@@ -48,6 +48,7 @@ let selectedHistoryId = historyItems[0]?.id || '';
 let recordingStartedAt = 0;
 let lastRecordingToggleAt = 0;
 let recordingTransitionInFlight = false;
+let recordingFinishing = false;
 let stopAfterStartRequested = false;
 let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
@@ -623,6 +624,7 @@ function buildDebugBundle() {
     shortcut: formatShortcutLabel(shortcut),
     currentStatus: statusBox.textContent,
     recorderState: recorder?.state || null,
+    recordingFinishing,
     streamingSocketState: streamingSocket?.readyState ?? null,
     micPeakLevel: Number(waveformPeakLevel.toFixed(4)),
     chunksBuffered: chunks.map((chunk) => chunk instanceof Blob ? { size: chunk.size, type: chunk.type } : String(chunk)),
@@ -875,7 +877,7 @@ async function setupPushToTalkListeners() {
 }
 
 function startRecordingFromPushToTalk() {
-  if (recorder?.state === 'recording' || recordingTransitionInFlight) return;
+  if (recorder?.state === 'recording' || recordingTransitionInFlight || recordingFinishing) return;
   stopAfterStartRequested = false;
   miniWidget.classList.add('shortcut-active');
   miniWidgetLabel.textContent = 'Shortcut active';
@@ -891,6 +893,8 @@ async function stopRecordingFromPushToTalk() {
   miniWidget.classList.remove('shortcut-active');
 
   if (recorder?.state === 'recording') {
+    recordingFinishing = true;
+    addDebugEvent('recorder_stop_requested', { reason: 'push_to_talk_release', state: recorder.state });
     recorder.stop();
     return;
   }
@@ -915,15 +919,16 @@ async function testAudioDucking() {
 }
 
 async function toggleRecording() {
-  addDebugEvent('toggle_recording_called', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, provider: transcriptionProvider, streamingEnabled: deepgramStreamingEnabled });
+  addDebugEvent('toggle_recording_called', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing, provider: transcriptionProvider, streamingEnabled: deepgramStreamingEnabled });
   const now = Date.now();
-  if (recordingTransitionInFlight || now - lastRecordingToggleAt < RECORDING_TOGGLE_DEBOUNCE_MS) {
-    addDebugEvent('toggle_recording_ignored', { transition: recordingTransitionInFlight, msSinceLastToggle: now - lastRecordingToggleAt });
+  if (recordingTransitionInFlight || recordingFinishing || now - lastRecordingToggleAt < RECORDING_TOGGLE_DEBOUNCE_MS) {
+    addDebugEvent('toggle_recording_ignored', { transition: recordingTransitionInFlight, finishing: recordingFinishing, msSinceLastToggle: now - lastRecordingToggleAt });
     return;
   }
   lastRecordingToggleAt = now;
   if (recorder && recorder.state === 'recording') {
     addDebugEvent('recorder_stop_requested', { reason: 'toggle', state: recorder.state });
+    recordingFinishing = true;
     recorder.stop();
     return;
   }
@@ -991,9 +996,11 @@ async function toggleRecording() {
       recorder.start();
     }
     addDebugEvent('media_recorder_started', { state: recorder.state, streaming, mimeType: recorder.mimeType });
-    setStatus('recording', 'Recording… release shortcut or click stop when done.');
+    setStatus('recording', 'Recording… press shortcut again or click widget to stop.');
     if (stopAfterStartRequested) {
       stopAfterStartRequested = false;
+      recordingFinishing = true;
+      addDebugEvent('recorder_stop_requested', { reason: 'stop_after_start_requested', state: recorder.state });
       recorder.stop();
     }
   } catch (error) {
@@ -1203,6 +1210,9 @@ async function transcribeStreamingResult() {
     recorder = null;
     chunks = [];
     recordingStartedAt = 0;
+    recordingFinishing = false;
+    recordingTransitionInFlight = false;
+    addDebugEvent('recording_cleanup_complete', { path: 'streaming' });
     await restoreAudioAfterDelay();
     if (pauseBackgroundMediaEnabled && isTauriRuntime) {
       await invoke('resume_background_media');
@@ -1241,6 +1251,9 @@ async function transcribeAndPaste() {
     recorder = null;
     chunks = [];
     recordingStartedAt = 0;
+    recordingFinishing = false;
+    recordingTransitionInFlight = false;
+    addDebugEvent('recording_cleanup_complete', { path: 'normal' });
     await restoreAudioAfterDelay();
     if (pauseBackgroundMediaEnabled && isTauriRuntime) {
       await invoke('resume_background_media');
