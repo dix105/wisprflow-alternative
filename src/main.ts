@@ -68,6 +68,8 @@ let waveformContext: AudioContext | null = null;
 let waveformAnalyser: AnalyserNode | null = null;
 let waveformFrame = 0;
 let waveformData: Uint8Array<ArrayBuffer> | null = null;
+let waveformLastLogAt = 0;
+let waveformPeakLevel = 0;
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
 const numberFormatter = new Intl.NumberFormat();
 
@@ -622,6 +624,7 @@ function buildDebugBundle() {
     currentStatus: statusBox.textContent,
     recorderState: recorder?.state || null,
     streamingSocketState: streamingSocket?.readyState ?? null,
+    micPeakLevel: Number(waveformPeakLevel.toFixed(4)),
     chunksBuffered: chunks.map((chunk) => chunk instanceof Blob ? { size: chunk.size, type: chunk.type } : String(chunk)),
     events: debugEvents,
   }, null, 2);
@@ -638,6 +641,8 @@ function startWaveformMonitor(stream: MediaStream) {
   waveformAnalyser = waveformContext.createAnalyser();
   waveformAnalyser.fftSize = 256;
   waveformData = new Uint8Array(new ArrayBuffer(waveformAnalyser.frequencyBinCount));
+  waveformPeakLevel = 0;
+  waveformLastLogAt = Date.now();
   waveformContext.createMediaStreamSource(stream).connect(waveformAnalyser);
 
   const bars = Array.from(miniWidget.querySelectorAll<HTMLElement>('.mini-wave i'));
@@ -651,6 +656,18 @@ function startWaveformMonitor(stream: MediaStream) {
     for (const value of waveformData) sum += Math.abs(value - 128);
     const volume = sum / waveformData.length / 128;
     const level = Math.min(1, Math.max(0, (volume - 0.015) * 12));
+    waveformPeakLevel = Math.max(waveformPeakLevel, level);
+
+    const now = Date.now();
+    if (now - waveformLastLogAt > 1000) {
+      waveformLastLogAt = now;
+      addDebugEvent('mic_level', {
+        volume: Number(volume.toFixed(4)),
+        level: Number(level.toFixed(4)),
+        peakLevel: Number(waveformPeakLevel.toFixed(4)),
+        speaking: volume > 0.035,
+      });
+    }
 
     miniWidget.classList.toggle('speaking', volume > 0.035);
     bars.forEach((bar, index) => {
@@ -670,6 +687,7 @@ function stopWaveformMonitor() {
   waveformFrame = 0;
   waveformAnalyser = null;
   waveformData = null;
+  waveformLastLogAt = 0;
   miniWidget.classList.remove('speaking');
   miniWidget.querySelectorAll<HTMLElement>('.mini-wave i').forEach((bar) => bar.style.removeProperty('--bar-height'));
   if (waveformContext) {
