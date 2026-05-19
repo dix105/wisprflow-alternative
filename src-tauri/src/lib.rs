@@ -23,12 +23,12 @@ use windows::Win32::{
     },
     UI::{
         Input::KeyboardAndMouse::{
-            keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_MEDIA_PLAY_PAUSE,
+            keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, RegisterHotKey, UnregisterHotKey,
+            HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, VK_CONTROL, VK_MEDIA_PLAY_PAUSE,
             VK_MENU, VK_RETURN, VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
-            GetMessageW, PostThreadMessageW, RegisterHotKey, UnregisterHotKey, MSG, MOD_ALT,
-            MOD_CONTROL, MOD_SHIFT, WM_APP, WM_HOTKEY,
+            GetMessageW, PostThreadMessageW, MSG, WM_APP, WM_HOTKEY,
         },
     },
 };
@@ -476,8 +476,8 @@ fn register_current_hotkey(app: &tauri::AppHandle) {
 }
 
 #[cfg(windows)]
-fn hotkey_modifiers_and_key(keys: &[u32]) -> Option<(windows::Win32::UI::WindowsAndMessaging::HOT_KEY_MODIFIERS, u32)> {
-    let mut modifiers = windows::Win32::UI::WindowsAndMessaging::HOT_KEY_MODIFIERS(0);
+fn hotkey_modifiers_and_key(keys: &[u32]) -> Option<(HOT_KEY_MODIFIERS, u32)> {
+    let mut modifiers = HOT_KEY_MODIFIERS(0);
     let mut final_key = None;
 
     for key in keys {
