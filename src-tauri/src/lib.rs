@@ -14,10 +14,13 @@ use tauri::Emitter;
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(windows)]
 use windows::Win32::{
-    Foundation::{LPARAM, LRESULT, WPARAM},
+    Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM},
     Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator},
     Media::Audio::Endpoints::IAudioEndpointVolume,
-    System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
+    System::{
+        Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
+        LibraryLoader::GetModuleHandleW,
+    },
     UI::{
         Input::KeyboardAndMouse::{
             keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL, VK_MEDIA_PLAY_PAUSE,
@@ -404,14 +407,18 @@ fn install_push_to_talk_hook(app: tauri::AppHandle, shortcut: String) -> Result<
         }
 
         if !HOOK_STARTED.swap(true, Ordering::SeqCst) {
-            thread::spawn(|| unsafe {
-                match SetWindowsHookExW(WH_KEYBOARD_LL, Some(push_to_talk_keyboard_proc), None, 0) {
+            let app_for_thread = guard_app_clone(state)?;
+            thread::spawn(move || unsafe {
+                let hinstance = GetModuleHandleW(None).ok().map(|module| HINSTANCE(module.0));
+                match SetWindowsHookExW(WH_KEYBOARD_LL, Some(push_to_talk_keyboard_proc), hinstance, 0) {
                     Ok(_hook) => {
+                        let _ = app_for_thread.emit("push-to-talk-debug", "hook-installed".to_string());
                         let mut message = MSG::default();
                         while GetMessageW(&mut message, None, 0, 0).as_bool() {}
                     }
                     Err(error) => {
                         HOOK_STARTED.store(false, Ordering::SeqCst);
+                        let _ = app_for_thread.emit("push-to-talk-debug", format!("hook-install-error: {error}"));
                         eprintln!("Failed to install push-to-talk hook: {error}");
                     }
                 }
@@ -420,6 +427,14 @@ fn install_push_to_talk_hook(app: tauri::AppHandle, shortcut: String) -> Result<
 
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn guard_app_clone(state: &Mutex<PushToTalkHookState>) -> Result<tauri::AppHandle, String> {
+    state
+        .lock()
+        .map(|guard| guard.app.clone())
+        .map_err(|_| "Push-to-talk hook state lock failed".to_string())
 }
 
 #[cfg(windows)]

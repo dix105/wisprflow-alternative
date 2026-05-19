@@ -812,11 +812,15 @@ async function installShortcut(next: string) {
       holdToTalkEnabled = true;
       setStatus('success', `Hold-to-talk shortcut registered: ${formatShortcutLabel(next)}. Release stops recording.`);
       addDebugEvent('push_to_talk_hook_registered', { shortcut: next });
-      try {
-        await register(next, () => startRecordingFromGlobalShortcutBackup());
-        addDebugEvent('global_shortcut_hold_backup_registered', { shortcut: next });
-      } catch (backupError) {
-        addDebugEvent('global_shortcut_hold_backup_failed', { shortcut: next, error: String(backupError) });
+      if (isUnsafeRecordingShortcut(next)) {
+        addDebugEvent('global_shortcut_hold_backup_skipped_for_letter_shortcut', { shortcut: next });
+      } else {
+        try {
+          await register(next, () => startRecordingFromGlobalShortcutBackup());
+          addDebugEvent('global_shortcut_hold_backup_registered', { shortcut: next });
+        } catch (backupError) {
+          addDebugEvent('global_shortcut_hold_backup_failed', { shortcut: next, error: String(backupError) });
+        }
       }
       return;
     } catch (error) {
