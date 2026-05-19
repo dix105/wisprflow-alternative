@@ -62,6 +62,7 @@ let pendingStreamingChunks: Blob[] = [];
 let streamingSendPromises: Promise<void>[] = [];
 let streamingSocketOpened = false;
 let streamingSocketFailed = false;
+let streamingPastedLive = false;
 let debugEvents: { time: string; label: string; data?: unknown }[] = [];
 let pushToTalkListenersReady = false;
 let waveformContext: AudioContext | null = null;
@@ -1086,6 +1087,7 @@ function openStreamingSocket() {
   streamingSendPromises = [];
   streamingSocketOpened = false;
   streamingSocketFailed = false;
+  streamingPastedLive = false;
 
   const url = 'wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en-US&interim_results=true&punctuate=true&endpointing=300&utterance_end_ms=1000';
   addDebugEvent('deepgram_socket_opening', { url, auth: 'subprotocol token', expectedWords: debugExpectedWordsInput.value.trim() });
@@ -1120,7 +1122,14 @@ function openStreamingSocket() {
             ? [...streamingFinalParts, text].join(' ')
             : [...streamingFinalParts, text].join(' ');
           const delta = liveTranscript.substring(streamingLastPastedLength);
-          if (delta) addDebugEvent('streaming_transcript_delta_buffered', { delta, length: delta.length });
+          if (delta && isTauriRuntime) {
+            streamingPastedLive = true;
+            invoke('paste_transcript', { text: delta })
+              .then(() => addDebugEvent('live_paste_delta', { delta, length: delta.length }))
+              .catch((error) => addDebugEvent('live_paste_delta_failed', { delta, error: String(error) }));
+          } else if (delta) {
+            addDebugEvent('live_paste_delta_browser_skipped', { delta, length: delta.length });
+          }
           streamingLastPastedLength = Math.max(streamingLastPastedLength, liveTranscript.length);
           streamingTranscript = liveTranscript;
         }
@@ -1246,7 +1255,12 @@ async function transcribeStreamingResult() {
     addDebugEvent('streaming_transcription_finish_result', { text, length: text.length, socketFailed: streamingSocketFailed });
 
     if (text) {
-      if (isTauriRuntime) await invoke('paste_transcript', { text });
+      if (isTauriRuntime && !streamingPastedLive) {
+        await invoke('paste_transcript', { text });
+        addDebugEvent('streaming_final_paste_full_text', { length: text.length });
+      } else if (streamingPastedLive) {
+        addDebugEvent('streaming_final_paste_skipped_already_live', { length: text.length });
+      }
       const stats = addHistory(text, durationMs);
       rewriteInput.value = text;
       setStatus('success', `Streamed and pasted: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
