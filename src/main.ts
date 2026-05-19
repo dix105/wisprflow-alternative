@@ -520,6 +520,7 @@ function setStatus(kind: StatusKind, message: string) {
   statusBox.className = `status ${kind}`;
   statusBox.textContent = message;
   recordOrb.className = `record-orb ${kind}`;
+  miniWidget.classList.remove('shortcut-active');
   miniWidget.classList.toggle('recording', kind === 'recording');
   miniWidget.classList.toggle('working', kind === 'working');
   miniWidget.classList.toggle('idle', kind !== 'recording' && kind !== 'working');
@@ -777,6 +778,9 @@ async function setupPushToTalkListeners() {
 function startRecordingFromPushToTalk() {
   if (recorder?.state === 'recording' || recordingTransitionInFlight) return;
   stopAfterStartRequested = false;
+  miniWidget.classList.add('shortcut-active');
+  miniWidgetLabel.textContent = 'Shortcut active';
+  miniWidgetState.textContent = 'Opening mic';
   toggleRecording();
 }
 
@@ -784,6 +788,8 @@ async function stopRecordingFromPushToTalk() {
   await sleep(PUSH_TO_TALK_RELEASE_CONFIRM_MS);
   const stillPressed = await invoke<boolean>('is_push_to_talk_pressed');
   if (stillPressed) return;
+
+  miniWidget.classList.remove('shortcut-active');
 
   if (recorder?.state === 'recording') {
     recorder.stop();
@@ -819,6 +825,9 @@ async function toggleRecording() {
   }
 
   recordingTransitionInFlight = true;
+  miniWidget.classList.add('shortcut-active');
+  miniWidgetLabel.textContent = 'Shortcut active';
+  miniWidgetState.textContent = 'Opening mic';
 
   try {
     syncApiKey();
@@ -884,6 +893,7 @@ async function toggleRecording() {
     setStatus('error', `Mic error: ${String(error)}`);
   } finally {
     recordingTransitionInFlight = false;
+    if (recorder?.state !== 'recording') miniWidget.classList.remove('shortcut-active');
   }
 }
 
