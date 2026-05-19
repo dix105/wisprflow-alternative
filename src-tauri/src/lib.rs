@@ -429,10 +429,16 @@ unsafe extern "system" fn push_to_talk_keyboard_proc(code: i32, wparam: WPARAM, 
         let key = (*(lparam.0 as *const KBDLLHOOKSTRUCT)).vkCode;
         let is_down = event == WM_KEYDOWN || event == WM_SYSKEYDOWN;
         let is_up = event == WM_KEYUP || event == WM_SYSKEYUP;
+        let mut consume_event = false;
 
         if is_down || is_up {
             if let Some(state) = HOOK_STATE.get() {
                 if let Ok(mut guard) = state.lock() {
+                    let shortcut_key = guard.shortcut_keys.contains(&key);
+                    if shortcut_key || guard.active {
+                        consume_event = true;
+                    }
+
                     if is_down {
                         guard.keys_down.insert(key);
                         if !guard.active && guard.shortcut_keys.iter().all(|part| guard.keys_down.contains(part)) {
@@ -448,6 +454,10 @@ unsafe extern "system" fn push_to_talk_keyboard_proc(code: i32, wparam: WPARAM, 
                     }
                 }
             }
+        }
+
+        if consume_event {
+            return LRESULT(1);
         }
     }
 

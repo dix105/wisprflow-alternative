@@ -816,11 +816,23 @@ async function installShortcut(next: string) {
     if (shortcut && await isRegistered(shortcut)) {
       await unregister(shortcut);
     }
+    try {
+      await invoke('install_push_to_talk_hook', { shortcut: next });
+      shortcut = next;
+      localStorage.setItem('shortcut', next);
+      renderShortcut(next);
+      setStatus('success', `Hold-to-talk shortcut registered: ${formatShortcutLabel(next)}. Release stops recording.`);
+      addDebugEvent('push_to_talk_hook_registered', { shortcut: next });
+      return;
+    } catch (error) {
+      addDebugEvent('push_to_talk_hook_failed_falling_back', String(error));
+    }
+
     await register(next, () => toggleRecording());
     shortcut = next;
     localStorage.setItem('shortcut', next);
     renderShortcut(next);
-    setStatus('success', `Recording shortcut registered: ${formatShortcutLabel(next)}`);
+    setStatus('success', `Toggle shortcut registered: ${formatShortcutLabel(next)}`);
   } catch (error) {
     setStatus('error', `Could not register recording shortcut: ${String(error)}`);
   }
@@ -909,12 +921,7 @@ async function stopRecordingFromPushToTalk() {
 
   miniWidget.classList.remove('shortcut-active');
 
-  if (recorder?.state === 'recording') {
-    recordingFinishing = true;
-    addDebugEvent('recorder_stop_requested', { reason: 'push_to_talk_release', state: recorder.state });
-    recorder.stop();
-    return;
-  }
+  if (requestStopRecording('push_to_talk_release')) return;
   if (recordingTransitionInFlight) stopAfterStartRequested = true;
 }
 
@@ -943,12 +950,7 @@ async function toggleRecording() {
     return;
   }
   lastRecordingToggleAt = now;
-  if (recorder && recorder.state === 'recording') {
-    addDebugEvent('recorder_stop_requested', { reason: 'toggle', state: recorder.state });
-    recordingFinishing = true;
-    recorder.stop();
-    return;
-  }
+  if (requestStopRecording('toggle')) return;
 
   recordingTransitionInFlight = true;
   miniWidget.classList.add('shortcut-active');
@@ -1016,9 +1018,7 @@ async function toggleRecording() {
     setStatus('recording', 'Recording… press shortcut again or click widget to stop.');
     if (stopAfterStartRequested) {
       stopAfterStartRequested = false;
-      recordingFinishing = true;
-      addDebugEvent('recorder_stop_requested', { reason: 'stop_after_start_requested', state: recorder.state });
-      recorder.stop();
+      requestStopRecording('stop_after_start_requested');
     }
   } catch (error) {
     await restoreAudioAfterDelay();
@@ -1031,6 +1031,16 @@ async function toggleRecording() {
     recordingTransitionInFlight = false;
     if (recorder?.state !== 'recording') miniWidget.classList.remove('shortcut-active');
   }
+}
+
+function requestStopRecording(reason: string) {
+  if (recorder?.state === 'recording') {
+    recordingFinishing = true;
+    addDebugEvent('recorder_stop_requested', { reason, state: recorder.state });
+    recorder.stop();
+    return true;
+  }
+  return false;
 }
 
 function isStreamingActive(): boolean {
