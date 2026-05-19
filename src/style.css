@@ -222,12 +222,52 @@ kbd { display: inline-flex; min-width: 25px; justify-content: center; margin: 0 
 .settings-row:last-of-type { border-radius: 0 0 14px 14px; border-bottom: 0; }
 .settings-row strong { display: block; margin-bottom: 5px; }
 .settings-row input[type='checkbox'] { width: 48px; height: 28px; justify-self: end; accent-color: #191816; }
-.mini-widget { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 15; display: flex; align-items: center; gap: 10px; border: 1px solid #ddd8cf; border-radius: 999px; padding: 9px 11px; background: #fff; box-shadow: 0 18px 60px rgba(15,23,42,.16); }
-.mini-widget[hidden] { display: none; }
-.mini-wave { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: breathe 1s ease-in-out infinite; }
-.mini-widget button { border: 0; border-radius: 999px; padding: 7px 11px; color: #fff; background: #191816; }
+.mini-widget {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) scale(1);
+  transform-origin: center bottom;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 228px;
+  min-height: 62px;
+  border: 1px solid rgba(25,24,22,.1);
+  border-radius: 999px;
+  padding: 10px 14px 10px 16px;
+  background: rgba(255,255,255,.92);
+  color: #191816;
+  box-shadow: 0 20px 70px rgba(25,24,22,.18), 0 1px 0 rgba(255,255,255,.7) inset;
+  backdrop-filter: blur(18px);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.mini-widget:hover { transform: translateX(-50%) translateY(-2px) scale(1.03); box-shadow: 0 24px 78px rgba(25,24,22,.2), 0 1px 0 rgba(255,255,255,.72) inset; }
+.mini-widget:active,
+.mini-widget.recording { transform: translateX(-50%) translateY(-3px) scale(1.08); }
+.mini-widget.recording { border-color: rgba(220,38,38,.28); background: rgba(255,247,247,.94); box-shadow: 0 26px 86px rgba(220,38,38,.22), 0 1px 0 rgba(255,255,255,.75) inset; }
+.mini-widget.working { opacity: .86; pointer-events: none; }
+.mini-widget strong { min-width: 78px; text-align: left; font-size: 14px; letter-spacing: -.02em; }
+.mini-widget em { margin-left: auto; border-radius: 999px; padding: 6px 9px; background: #f1eee8; color: #6b665e; font-size: 11px; font-style: normal; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.mini-widget.recording em { background: #fee2e2; color: #991b1b; }
+.mini-widget.speaking em { background: #dc2626; color: #fff; }
+.mini-wave { width: 58px; height: 34px; display: flex; align-items: center; justify-content: center; gap: 4px; }
+.mini-wave i { width: 4px; height: var(--bar-height, 13px); border-radius: 999px; background: #8b8479; transition: height 70ms linear, background 120ms ease; }
+.mini-wave i:nth-child(2), .mini-wave i:nth-child(6) { --bar-height: 18px; }
+.mini-wave i:nth-child(3), .mini-wave i:nth-child(5) { --bar-height: 24px; }
+.mini-wave i:nth-child(4) { --bar-height: 30px; }
+.mini-widget.recording .mini-wave i { background: #dc2626; animation: idleWave 900ms ease-in-out infinite; }
+.mini-widget.recording .mini-wave i:nth-child(2) { animation-delay: 80ms; }
+.mini-widget.recording .mini-wave i:nth-child(3) { animation-delay: 160ms; }
+.mini-widget.recording .mini-wave i:nth-child(4) { animation-delay: 240ms; }
+.mini-widget.recording .mini-wave i:nth-child(5) { animation-delay: 320ms; }
+.mini-widget.recording .mini-wave i:nth-child(6) { animation-delay: 400ms; }
+.mini-widget.recording .mini-wave i:nth-child(7) { animation-delay: 480ms; }
+.mini-widget.speaking .mini-wave i { animation: none; background: #b91c1c; }
 
 @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes idleWave { 0%,100% { transform: scaleY(.72); opacity: .72; } 50% { transform: scaleY(1); opacity: 1; } }
 
 @media (max-width: 960px) {
   .app-layout { grid-template-columns: 1fr; }
@@ -238,4 +278,5 @@ kbd { display: inline-flex; min-width: 25px; justify-content: center; margin: 0 
   .drawer-panel { grid-template-columns: 1fr; overflow: auto; }
   .settings-sidebar { display: none; }
   .settings-main { padding: 28px; }
+  .mini-widget { bottom: 18px; min-width: 210px; }
 }

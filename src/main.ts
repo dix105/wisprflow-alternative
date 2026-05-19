@@ -58,6 +58,10 @@ let streamingTranscript = '';
 let streamingFinalParts: string[] = [];
 let streamingLastPastedLength = 0;
 let pushToTalkListenersReady = false;
+let waveformContext: AudioContext | null = null;
+let waveformAnalyser: AnalyserNode | null = null;
+let waveformFrame = 0;
+let waveformData: Uint8Array<ArrayBuffer> | null = null;
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
 const numberFormatter = new Intl.NumberFormat();
 
@@ -195,7 +199,11 @@ app.innerHTML = `
       </section>
     </aside>
 
-    <div id="miniWidget" class="mini-widget" hidden><span class="mini-wave"></span><strong>Recording</strong><button id="miniStop" type="button">Stop</button></div>
+    <button id="miniWidget" class="mini-widget idle" type="button" aria-label="Start recording" aria-pressed="false">
+      <span class="mini-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <strong id="miniWidgetLabel">Tap to speak</strong>
+      <em id="miniWidgetState">Idle</em>
+    </button>
 
   </main>
 `;
@@ -232,7 +240,8 @@ const averageWordsPerMinuteEl = document.querySelector<HTMLElement>('#averageWor
 const averageWordsPerRecordingEl = document.querySelector<HTMLElement>('#averageWordsPerRecording')!;
 const recordOrb = document.querySelector<HTMLElement>('#recordOrb')!;
 const miniWidget = document.querySelector<HTMLElement>('#miniWidget')!;
-const miniStopButton = document.querySelector<HTMLButtonElement>('#miniStop')!;
+const miniWidgetLabel = document.querySelector<HTMLElement>('#miniWidgetLabel')!;
+const miniWidgetState = document.querySelector<HTMLElement>('#miniWidgetState')!;
 const rewriteInput = document.querySelector<HTMLTextAreaElement>('#rewriteInput')!;
 const rewriteOutput = document.querySelector<HTMLElement>('#rewriteOutput')!;
 const historyList = document.querySelector<HTMLElement>('#historyList')!;
@@ -350,7 +359,7 @@ saveButton.addEventListener('click', () => installShortcut(shortcut));
 saveMirrorButton.addEventListener('click', () => installShortcut(shortcut));
 savePolishShortcutButton.addEventListener('click', () => installPolishShortcut(polishShortcut));
 toggleButton.addEventListener('click', () => toggleRecording());
-miniStopButton.addEventListener('click', () => toggleRecording());
+miniWidget.addEventListener('click', () => toggleRecording());
 settingsButton?.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
 drawerBackdrop.addEventListener('click', closeSettings);
@@ -511,10 +520,66 @@ function setStatus(kind: StatusKind, message: string) {
   statusBox.className = `status ${kind}`;
   statusBox.textContent = message;
   recordOrb.className = `record-orb ${kind}`;
-  miniWidget.hidden = kind !== 'recording';
+  miniWidget.classList.toggle('recording', kind === 'recording');
+  miniWidget.classList.toggle('working', kind === 'working');
+  miniWidget.classList.toggle('idle', kind !== 'recording' && kind !== 'working');
+  miniWidget.setAttribute('aria-pressed', String(kind === 'recording'));
+  miniWidget.setAttribute('aria-label', kind === 'recording' ? 'Stop recording' : 'Start recording');
+  miniWidgetLabel.textContent = kind === 'recording' ? 'Listening' : kind === 'working' ? 'Processing' : 'Tap to speak';
+  miniWidgetState.textContent = kind === 'recording' ? 'Speak now' : kind === 'working' ? 'Wait' : 'Idle';
+  if (kind !== 'recording') stopWaveformMonitor();
   toggleButton.innerHTML = kind === 'recording'
     ? '<span class="button-dot"></span>Stop and paste'
     : '<span class="button-dot"></span>Start recording';
+}
+
+function startWaveformMonitor(stream: MediaStream) {
+  stopWaveformMonitor();
+
+  const AudioContextCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return;
+
+  waveformContext = new AudioContextCtor();
+  waveformAnalyser = waveformContext.createAnalyser();
+  waveformAnalyser.fftSize = 256;
+  waveformData = new Uint8Array(new ArrayBuffer(waveformAnalyser.frequencyBinCount));
+  waveformContext.createMediaStreamSource(stream).connect(waveformAnalyser);
+
+  const bars = Array.from(miniWidget.querySelectorAll<HTMLElement>('.mini-wave i'));
+  const multipliers = [0.5, 0.75, 1.12, 0.86, 1.28, 0.7, 0.52];
+
+  const tick = () => {
+    if (!waveformAnalyser || !waveformData) return;
+    waveformAnalyser.getByteTimeDomainData(waveformData);
+
+    let sum = 0;
+    for (const value of waveformData) sum += Math.abs(value - 128);
+    const volume = sum / waveformData.length / 128;
+    const level = Math.min(1, Math.max(0, (volume - 0.015) * 12));
+
+    miniWidget.classList.toggle('speaking', volume > 0.035);
+    bars.forEach((bar, index) => {
+      const height = 12 + level * 34 * multipliers[index % multipliers.length];
+      bar.style.setProperty('--bar-height', `${Math.max(10, Math.min(48, height))}px`);
+    });
+
+    waveformFrame = window.requestAnimationFrame(tick);
+  };
+
+  tick();
+}
+
+function stopWaveformMonitor() {
+  if (waveformFrame) window.cancelAnimationFrame(waveformFrame);
+  waveformFrame = 0;
+  waveformAnalyser = null;
+  waveformData = null;
+  miniWidget.classList.remove('speaking');
+  miniWidget.querySelectorAll<HTMLElement>('.mini-wave i').forEach((bar) => bar.style.removeProperty('--bar-height'));
+  if (waveformContext) {
+    waveformContext.close().catch(() => {});
+    waveformContext = null;
+  }
 }
 
 function renderShortcut(value: string) {
@@ -775,6 +840,7 @@ async function toggleRecording() {
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    startWaveformMonitor(stream);
     chunks = [];
     recorder = new MediaRecorder(stream, { mimeType: pickMimeType() });
 
