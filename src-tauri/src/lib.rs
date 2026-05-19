@@ -14,12 +14,12 @@ use tauri::Emitter;
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(windows)]
 use windows::Win32::{
-    Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM},
+    Foundation::{LPARAM, WPARAM},
     Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator},
     Media::Audio::Endpoints::IAudioEndpointVolume,
     System::{
         Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
-        LibraryLoader::GetModuleHandleW,
+        Threading::GetCurrentThreadId,
     },
     UI::{
         Input::KeyboardAndMouse::{
@@ -27,8 +27,8 @@ use windows::Win32::{
             VK_MENU, VK_RETURN, VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, GetMessageW, SetWindowsHookExW, HHOOK, KBDLLHOOKSTRUCT, MSG,
-            WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            GetMessageW, PostThreadMessageW, RegisterHotKey, UnregisterHotKey, MSG, MOD_ALT,
+            MOD_CONTROL, MOD_SHIFT, WM_APP, WM_HOTKEY,
         },
     },
 };
@@ -38,7 +38,14 @@ static ORIGINAL_SYSTEM_VOLUME: Mutex<Option<f32>> = Mutex::new(None);
 #[cfg(windows)]
 static HOOK_STARTED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
+static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(windows)]
 static HOOK_STATE: OnceLock<Mutex<PushToTalkHookState>> = OnceLock::new();
+
+#[cfg(windows)]
+const HOTKEY_ID: i32 = 0x4644;
+#[cfg(windows)]
+const WM_FLOWDESK_UPDATE_HOTKEY: u32 = WM_APP + 101;
 
 #[cfg(windows)]
 struct PushToTalkHookState {
@@ -409,24 +416,80 @@ fn install_push_to_talk_hook(app: tauri::AppHandle, shortcut: String) -> Result<
         if !HOOK_STARTED.swap(true, Ordering::SeqCst) {
             let app_for_thread = guard_app_clone(state)?;
             thread::spawn(move || unsafe {
-                let hinstance = GetModuleHandleW(None).ok().map(|module| HINSTANCE(module.0));
-                match SetWindowsHookExW(WH_KEYBOARD_LL, Some(push_to_talk_keyboard_proc), hinstance, 0) {
-                    Ok(_hook) => {
-                        let _ = app_for_thread.emit("push-to-talk-debug", "hook-installed".to_string());
-                        let mut message = MSG::default();
-                        while GetMessageW(&mut message, None, 0, 0).as_bool() {}
-                    }
-                    Err(error) => {
-                        HOOK_STARTED.store(false, Ordering::SeqCst);
-                        let _ = app_for_thread.emit("push-to-talk-debug", format!("hook-install-error: {error}"));
-                        eprintln!("Failed to install push-to-talk hook: {error}");
+                HOTKEY_THREAD_ID.store(GetCurrentThreadId(), Ordering::SeqCst);
+                let _ = app_for_thread.emit("push-to-talk-debug", "hotkey-thread-started".to_string());
+                register_current_hotkey(&app_for_thread);
+
+                let mut message = MSG::default();
+                while GetMessageW(&mut message, None, 0, 0).as_bool() {
+                    if message.message == WM_FLOWDESK_UPDATE_HOTKEY {
+                        register_current_hotkey(&app_for_thread);
+                    } else if message.message == WM_HOTKEY && message.wParam.0 as i32 == HOTKEY_ID {
+                        let _ = app_for_thread.emit("push-to-talk-debug", "wm_hotkey_down".to_string());
+                        let _ = app_for_thread.emit("push-to-talk-down", ());
+
+                        let app_release = app_for_thread.clone();
+                        thread::spawn(move || {
+                            loop {
+                                thread::sleep(Duration::from_millis(35));
+                                let still_pressed = is_push_to_talk_pressed();
+                                if !still_pressed {
+                                    let _ = app_release.emit("push-to-talk-debug", "wm_hotkey_up".to_string());
+                                    let _ = app_release.emit("push-to-talk-up", ());
+                                    break;
+                                }
+                            }
+                        });
                     }
                 }
             });
+        } else {
+            let thread_id = HOTKEY_THREAD_ID.load(Ordering::SeqCst);
+            if thread_id != 0 {
+                unsafe { let _ = PostThreadMessageW(thread_id, WM_FLOWDESK_UPDATE_HOTKEY, WPARAM(0), LPARAM(0)); }
+            }
         }
 
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn register_current_hotkey(app: &tauri::AppHandle) {
+    unsafe { let _ = UnregisterHotKey(None, HOTKEY_ID); }
+
+    let Some((modifiers, key)) = HOOK_STATE
+        .get()
+        .and_then(|state| state.lock().ok())
+        .and_then(|guard| hotkey_modifiers_and_key(&guard.shortcut_keys)) else {
+        let _ = app.emit("push-to-talk-debug", "hotkey-register-skipped".to_string());
+        return;
+    };
+
+    match unsafe { RegisterHotKey(None, HOTKEY_ID, modifiers, key) } {
+        Ok(()) => { let _ = app.emit("push-to-talk-debug", format!("hotkey-registered modifiers={modifiers:?} key={key}")); }
+        Err(error) => {
+            let _ = app.emit("push-to-talk-debug", format!("hotkey-register-error: {error}"));
+            HOOK_STARTED.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn hotkey_modifiers_and_key(keys: &[u32]) -> Option<(windows::Win32::UI::WindowsAndMessaging::HOT_KEY_MODIFIERS, u32)> {
+    let mut modifiers = windows::Win32::UI::WindowsAndMessaging::HOT_KEY_MODIFIERS(0);
+    let mut final_key = None;
+
+    for key in keys {
+        match *key {
+            k if k == VK_CONTROL.0 as u32 => modifiers |= MOD_CONTROL,
+            k if k == VK_MENU.0 as u32 => modifiers |= MOD_ALT,
+            k if k == VK_SHIFT.0 as u32 => modifiers |= MOD_SHIFT,
+            _ => final_key = Some(*key),
+        }
+    }
+
+    final_key.map(|key| (modifiers, key))
 }
 
 #[cfg(windows)]
@@ -435,48 +498,6 @@ fn guard_app_clone(state: &Mutex<PushToTalkHookState>) -> Result<tauri::AppHandl
         .lock()
         .map(|guard| guard.app.clone())
         .map_err(|_| "Push-to-talk hook state lock failed".to_string())
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn push_to_talk_keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 {
-        let event = wparam.0 as u32;
-        let key = (*(lparam.0 as *const KBDLLHOOKSTRUCT)).vkCode;
-        let is_down = event == WM_KEYDOWN || event == WM_SYSKEYDOWN;
-        let is_up = event == WM_KEYUP || event == WM_SYSKEYUP;
-        let mut consume_event = false;
-
-        if is_down || is_up {
-            if let Some(state) = HOOK_STATE.get() {
-                if let Ok(mut guard) = state.lock() {
-                    if is_down {
-                        guard.keys_down.insert(key);
-                        let shortcut_down = guard.shortcut_keys.iter().all(|part| guard.keys_down.contains(part));
-                        consume_event = guard.active || shortcut_down;
-                        if !guard.active && shortcut_down {
-                            guard.active = true;
-                            let _ = guard.app.emit("push-to-talk-debug", format!("down active=true key={key} consumed={consume_event}"));
-                            let _ = guard.app.emit("push-to-talk-down", ());
-                        }
-                    } else {
-                        consume_event = guard.active && guard.shortcut_keys.contains(&key);
-                        guard.keys_down.remove(&key);
-                        if guard.active && guard.shortcut_keys.contains(&key) {
-                            guard.active = false;
-                            let _ = guard.app.emit("push-to-talk-debug", format!("up active=false key={key} consumed={consume_event}"));
-                            let _ = guard.app.emit("push-to-talk-up", ());
-                        }
-                    }
-                }
-            }
-        }
-
-        if consume_event {
-            return LRESULT(1);
-        }
-    }
-
-    CallNextHookEx(None::<HHOOK>, code, wparam, lparam)
 }
 
 #[cfg(windows)]
@@ -697,6 +718,14 @@ fn send_ctrl_v() {
     const V_KEY: u8 = 0x56;
 
     unsafe {
+        // Live dictation may paste while the user is still holding the
+        // recording chord (for example Alt+V). Clear modifiers first so the
+        // paste is Ctrl+V, not Ctrl+Alt+V / menu navigation.
+        keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(VK_SHIFT.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(VK_CONTROL.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        thread::sleep(Duration::from_millis(20));
+
         keybd_event(VK_CONTROL.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
         keybd_event(V_KEY, 0, KEYBD_EVENT_FLAGS(0), 0);
         keybd_event(V_KEY, 0, KEYEVENTF_KEYUP, 0);
