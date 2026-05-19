@@ -19,7 +19,6 @@ const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
 const AUDIO_RESTORE_DELAY_MS = 150;
 const RECORDING_TOGGLE_DEBOUNCE_MS = 900;
-const PUSH_TO_TALK_RELEASE_CONFIRM_MS = 140;
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
@@ -42,8 +41,6 @@ let shortcut = localStorage.getItem('shortcut') || DEFAULT_SHORTCUT;
 let polishShortcut = localStorage.getItem(POLISH_SHORTCUT_KEY) || DEFAULT_POLISH_SHORTCUT;
 let captureTarget: 'dictation' | 'polish' | null = null;
 let pressedShortcutModifiers = new Set<string>();
-let holdToTalkEnabled = false;
-let releasePollActive = false;
 let transcriptionProvider = (localStorage.getItem(PROVIDER_KEY) as TranscriptionProvider) || 'groq';
 let historyItems: HistoryItem[] = loadHistory();
 let selectedHistoryId = historyItems[0]?.id || '';
@@ -809,19 +806,9 @@ async function installShortcut(next: string) {
       shortcut = next;
       localStorage.setItem('shortcut', next);
       renderShortcut(next);
-      holdToTalkEnabled = true;
-      setStatus('success', `Hold-to-talk shortcut registered: ${formatShortcutLabel(next)}. Release stops recording.`);
+      setStatus('success', `Toggle shortcut registered: ${formatShortcutLabel(next)}. Press once to start, press again to stop.`);
       addDebugEvent('push_to_talk_hook_registered', { shortcut: next });
-      if (isUnsafeRecordingShortcut(next)) {
-        addDebugEvent('global_shortcut_hold_backup_skipped_for_letter_shortcut', { shortcut: next });
-      } else {
-        try {
-          await register(next, () => startRecordingFromGlobalShortcutBackup());
-          addDebugEvent('global_shortcut_hold_backup_registered', { shortcut: next });
-        } catch (backupError) {
-          addDebugEvent('global_shortcut_hold_backup_failed', { shortcut: next, error: String(backupError) });
-        }
-      }
+      addDebugEvent('global_shortcut_backup_skipped_native_toggle_active', { shortcut: next });
       return;
     } catch (error) {
       addDebugEvent('push_to_talk_hook_failed_falling_back', String(error));
@@ -831,7 +818,7 @@ async function installShortcut(next: string) {
       shortcut = DEFAULT_SHORTCUT;
       localStorage.setItem('shortcut', shortcut);
       renderShortcut(shortcut);
-      setStatus('error', `Native hold-to-talk failed, so ${formatShortcutLabel(next)} was rejected because fallback toggle mode can type letters into apps. Use ${formatShortcutLabel(DEFAULT_SHORTCUT)} or fix native hook.`);
+      setStatus('error', `Native shortcut failed, so ${formatShortcutLabel(next)} was rejected because fallback mode can type letters into apps. Use ${formatShortcutLabel(DEFAULT_SHORTCUT)} or fix native hook.`);
       return;
     }
 
@@ -839,7 +826,6 @@ async function installShortcut(next: string) {
     shortcut = next;
     localStorage.setItem('shortcut', next);
     renderShortcut(next);
-    holdToTalkEnabled = false;
     setStatus('success', `Toggle shortcut registered: ${formatShortcutLabel(next)}`);
   } catch (error) {
     setStatus('error', `Could not register recording shortcut: ${String(error)}`);
@@ -937,63 +923,34 @@ async function setupPushToTalkListeners() {
   });
   await listen('push-to-talk-up', () => {
     addDebugEvent('push_to_talk_up_event');
-    stopRecordingFromPushToTalk();
+    addDebugEvent('push_to_talk_up_ignored_toggle_mode');
   });
 }
 
 function startRecordingFromPushToTalk() {
-  if (recorder?.state === 'recording' || recordingTransitionInFlight || recordingFinishing) {
-    addDebugEvent('push_to_talk_down_ignored', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
-    beginShortcutReleasePoll('push_to_talk_down_ignored');
+  addDebugEvent('push_to_talk_toggle_event', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
+
+  if (requestStopRecording('push_to_talk_toggle')) {
+    miniWidget.classList.remove('shortcut-active');
     return;
   }
+
+  if (recordingTransitionInFlight) {
+    stopAfterStartRequested = true;
+    addDebugEvent('push_to_talk_toggle_stop_after_start_requested');
+    return;
+  }
+
+  if (recordingFinishing) {
+    addDebugEvent('push_to_talk_toggle_ignored_finishing');
+    return;
+  }
+
   stopAfterStartRequested = false;
   miniWidget.classList.add('shortcut-active');
   miniWidgetLabel.textContent = 'Shortcut active';
   miniWidgetState.textContent = 'Opening mic';
   toggleRecording();
-  beginShortcutReleasePoll('push_to_talk_down');
-}
-
-function startRecordingFromGlobalShortcutBackup() {
-  addDebugEvent('global_shortcut_hold_backup_fired', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
-  startRecordingFromPushToTalk();
-}
-
-async function beginShortcutReleasePoll(source: string) {
-  if (!isTauriRuntime || releasePollActive) return;
-  releasePollActive = true;
-  addDebugEvent('shortcut_release_poll_start', { source });
-
-  try {
-    for (let attempt = 0; attempt < 1200; attempt += 1) {
-      await sleep(50);
-      const stillPressed = await invoke<boolean>('is_push_to_talk_pressed');
-      if (!stillPressed) {
-        addDebugEvent('shortcut_release_poll_released', { source, attempt });
-        await stopRecordingFromPushToTalk();
-        return;
-      }
-      if (attempt % 20 === 0) addDebugEvent('shortcut_release_poll_still_pressed', { source, attempt });
-    }
-    addDebugEvent('shortcut_release_poll_timeout', { source });
-  } catch (error) {
-    addDebugEvent('shortcut_release_poll_error', { source, error: String(error) });
-  } finally {
-    releasePollActive = false;
-  }
-}
-
-async function stopRecordingFromPushToTalk() {
-  await sleep(PUSH_TO_TALK_RELEASE_CONFIRM_MS);
-  const stillPressed = await invoke<boolean>('is_push_to_talk_pressed');
-  addDebugEvent('push_to_talk_release_check', { stillPressed, recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
-  if (stillPressed) return;
-
-  miniWidget.classList.remove('shortcut-active');
-
-  if (requestStopRecording('push_to_talk_release')) return;
-  if (recordingTransitionInFlight) stopAfterStartRequested = true;
 }
 
 async function testAudioDucking() {
@@ -1086,7 +1043,7 @@ async function toggleRecording() {
       recorder.start();
     }
     addDebugEvent('media_recorder_started', { state: recorder.state, streaming, mimeType: recorder.mimeType });
-    setStatus('recording', holdToTalkEnabled ? 'Recording… release shortcut to stop.' : 'Recording… press shortcut again or click widget to stop.');
+    setStatus('recording', 'Recording… press shortcut again or click widget to stop.');
     if (stopAfterStartRequested) {
       stopAfterStartRequested = false;
       requestStopRecording('stop_after_start_requested');
@@ -1163,10 +1120,7 @@ function openStreamingSocket() {
             ? [...streamingFinalParts, text].join(' ')
             : [...streamingFinalParts, text].join(' ');
           const delta = liveTranscript.substring(streamingLastPastedLength);
-          if (delta && isTauriRuntime) {
-            invoke('paste_transcript', { text: (streamingLastPastedLength > 0 ? ' ' : '') + delta }).catch(() => {});
-            addDebugEvent('live_paste_delta', { delta, length: delta.length });
-          }
+          if (delta) addDebugEvent('streaming_transcript_delta_buffered', { delta, length: delta.length });
           streamingLastPastedLength = Math.max(streamingLastPastedLength, liveTranscript.length);
           streamingTranscript = liveTranscript;
         }
@@ -1292,6 +1246,7 @@ async function transcribeStreamingResult() {
     addDebugEvent('streaming_transcription_finish_result', { text, length: text.length, socketFailed: streamingSocketFailed });
 
     if (text) {
+      if (isTauriRuntime) await invoke('paste_transcript', { text });
       const stats = addHistory(text, durationMs);
       rewriteInput.value = text;
       setStatus('success', `Streamed and pasted: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
