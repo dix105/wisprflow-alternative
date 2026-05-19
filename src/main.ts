@@ -931,7 +931,7 @@ function openStreamingSocket() {
   streamingSocketOpened = false;
   streamingSocketFailed = false;
 
-  const url = 'wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en-US&interim_results=true&punctuate=true&encoding=opus&sample_rate=48000';
+  const url = 'wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en-US&interim_results=true&punctuate=true&encoding=opus&sample_rate=48000&endpointing=300&utterance_end_ms=1000';
   const ws = new WebSocket(url, ['token', key]);
   ws.binaryType = 'arraybuffer';
 
@@ -948,15 +948,21 @@ function openStreamingSocket() {
       if (msg.type === 'Results' && msg.channel?.alternatives?.length) {
         const alt = msg.channel.alternatives[0];
         const text = alt.transcript || '';
-        if (msg.is_final && text) {
-          streamingFinalParts.push(text);
-          streamingTranscript = streamingFinalParts.join(' ');
-          // Paste the new delta directly into the focused app
-          const delta = streamingTranscript.substring(streamingLastPastedLength);
+        if (text) {
+          const liveTranscript = msg.is_final
+            ? [...streamingFinalParts, text].join(' ')
+            : [...streamingFinalParts, text].join(' ');
+          const delta = liveTranscript.substring(streamingLastPastedLength);
           if (delta && isTauriRuntime) {
             invoke('paste_transcript', { text: (streamingLastPastedLength > 0 ? ' ' : '') + delta }).catch(() => {});
           }
-          streamingLastPastedLength = streamingTranscript.length;
+          streamingLastPastedLength = Math.max(streamingLastPastedLength, liveTranscript.length);
+          streamingTranscript = liveTranscript;
+        }
+
+        if (msg.is_final && text) {
+          streamingFinalParts.push(text);
+          streamingTranscript = streamingFinalParts.join(' ');
         }
       }
     } catch {}
