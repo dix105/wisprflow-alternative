@@ -39,6 +39,10 @@ type HistoryItem = {
 let recorder: MediaRecorder | null = null;
 let chunks: BlobPart[] = [];
 let shortcut = localStorage.getItem('shortcut') || DEFAULT_SHORTCUT;
+if (isUnsafeRecordingShortcut(shortcut)) {
+  shortcut = DEFAULT_SHORTCUT;
+  localStorage.setItem('shortcut', shortcut);
+}
 let polishShortcut = localStorage.getItem(POLISH_SHORTCUT_KEY) || DEFAULT_POLISH_SHORTCUT;
 let captureTarget: 'dictation' | 'polish' | null = null;
 let pressedShortcutModifiers = new Set<string>();
@@ -793,6 +797,14 @@ function normalizeKey(key: string) {
 
 async function installShortcut(next: string) {
   try {
+    if (isUnsafeRecordingShortcut(next)) {
+      shortcut = DEFAULT_SHORTCUT;
+      localStorage.setItem('shortcut', shortcut);
+      renderShortcut(shortcut);
+      setStatus('error', `Recording shortcut cannot end with a letter like ${formatShortcutLabel(next)} because holding it can type into apps. Use ${formatShortcutLabel(DEFAULT_SHORTCUT)} or another non-text key.`);
+      return;
+    }
+
     if (!isTauriRuntime) {
       shortcut = next;
       localStorage.setItem('shortcut', next);
@@ -812,6 +824,11 @@ async function installShortcut(next: string) {
   } catch (error) {
     setStatus('error', `Could not register recording shortcut: ${String(error)}`);
   }
+}
+
+function isUnsafeRecordingShortcut(value: string) {
+  const finalKey = value.split('+').map((part) => part.trim()).filter(Boolean).at(-1) || '';
+  return /^[A-Z]$/i.test(finalKey);
 }
 
 
