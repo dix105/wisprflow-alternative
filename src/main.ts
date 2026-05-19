@@ -18,6 +18,7 @@ const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const RECORDING_MODE_KEY = 'flowDeskRecordingMode';
 const AUDIO_DUCKING_VOLUME_KEY = 'flowDeskAudioDuckingVolume';
 const FAST_MIC_KEY = 'flowDeskFastMic';
+const NATIVE_MIC_KEY = 'flowDeskNativeMic';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
 const AUDIO_RESTORE_DELAY_MS = 150;
@@ -53,12 +54,14 @@ let recordingStartedAt = 0;
 let lastRecordingToggleAt = 0;
 let recordingTransitionInFlight = false;
 let recordingFinishing = false;
+let nativeRecordingActive = false;
 let stopAfterStartRequested = false;
 let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
 let audioDuckingEnabled = true;
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
 let fastMicEnabled = localStorage.getItem(FAST_MIC_KEY) === 'true';
+let nativeMicEnabled = localStorage.getItem(NATIVE_MIC_KEY) !== 'false';
 let releasePollActive = false;
 let recordingMode = (localStorage.getItem(RECORDING_MODE_KEY) as RecordingMode) || 'hold';
 let audioDuckingVolume = Number(localStorage.getItem(AUDIO_DUCKING_VOLUME_KEY) || '35');
@@ -226,7 +229,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" type="button">☷ General</button><button type="button">▭ System</button><button type="button"># Vibe coding</button><button type="button">⚗ Experimental</button><hr><p>ACCOUNT</p><button type="button">◎ Account</button><button type="button">♙ Team</button><button type="button">▰ Plans and Billing</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the mic warm so recording starts almost instantly.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
       </section>
     </aside>
 
@@ -265,6 +268,7 @@ const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
 const pauseBackgroundMediaInput = document.querySelector<HTMLInputElement>('#pauseBackgroundMedia')!;
 const fastMicInput = document.querySelector<HTMLInputElement>('#fastMic')!;
+const nativeMicInput = document.querySelector<HTMLInputElement>('#nativeMic')!;
 const recordingModeInput = document.querySelector<HTMLSelectElement>('#recordingMode')!;
 const audioDuckingVolumeInput = document.querySelector<HTMLInputElement>('#audioDuckingVolume')!;
 const audioDuckingVolumeValue = document.querySelector<HTMLElement>('#audioDuckingVolumeValue')!;
@@ -303,6 +307,7 @@ renderHistory();
 renderStats();
 pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
 fastMicInput.checked = fastMicEnabled;
+nativeMicInput.checked = nativeMicEnabled;
 recordingModeInput.value = recordingMode;
 audioDuckingVolumeInput.value = String(audioDuckingVolume);
 audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
@@ -494,6 +499,12 @@ fastMicInput.addEventListener('change', () => {
     releaseWarmMic();
     setStatus('success', 'Fast mic mode disabled.');
   }
+});
+
+nativeMicInput.addEventListener('change', () => {
+  nativeMicEnabled = nativeMicInput.checked;
+  localStorage.setItem(NATIVE_MIC_KEY, String(nativeMicEnabled));
+  setStatus('success', nativeMicEnabled ? 'Native mic backend enabled.' : 'Native mic backend disabled.');
 });
 
 recordingModeInput.addEventListener('change', () => {
@@ -1117,7 +1128,7 @@ async function testAudioDucking() {
 }
 
 async function toggleRecording() {
-  addDebugEvent('toggle_recording_called', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing, provider: transcriptionProvider, streamingEnabled: deepgramStreamingEnabled });
+  addDebugEvent('toggle_recording_called', { recorderState: recorder?.state || null, nativeRecordingActive, transition: recordingTransitionInFlight, finishing: recordingFinishing, provider: transcriptionProvider, streamingEnabled: deepgramStreamingEnabled });
   const now = Date.now();
   if (recordingTransitionInFlight || recordingFinishing || now - lastRecordingToggleAt < RECORDING_TOGGLE_DEBOUNCE_MS) {
     addDebugEvent('toggle_recording_ignored', { transition: recordingTransitionInFlight, finishing: recordingFinishing, msSinceLastToggle: now - lastRecordingToggleAt });
@@ -1149,6 +1160,19 @@ async function toggleRecording() {
     if (audioDuckingEnabled && isTauriRuntime && !isAudioDucked) {
       await invoke('start_audio_ducking', { targetVolume: audioDuckingVolume / 100 });
       isAudioDucked = true;
+    }
+
+    if (shouldUseNativeMic()) {
+      await invoke('start_native_recording');
+      nativeRecordingActive = true;
+      recordingStartedAt = Date.now();
+      addDebugEvent('native_recording_started');
+      setStatus('recording', recordingMode === 'hold' ? 'Recording with native mic… release shortcut to stop.' : 'Recording with native mic… press shortcut again to stop.');
+      if (stopAfterStartRequested) {
+        stopAfterStartRequested = false;
+        requestStopRecording('stop_after_start_requested');
+      }
+      return;
     }
 
     const { stream, warm } = await getRecordingStream();
@@ -1207,11 +1231,25 @@ async function toggleRecording() {
     addDebugEvent('mic_error', String(error));
   } finally {
     recordingTransitionInFlight = false;
-    if (recorder?.state !== 'recording') miniWidget.classList.remove('shortcut-active');
+    if (!nativeRecordingActive && recorder?.state !== 'recording') miniWidget.classList.remove('shortcut-active');
   }
 }
 
 function requestStopRecording(reason: string) {
+  if (nativeRecordingActive) {
+    recordingFinishing = true;
+    nativeRecordingActive = false;
+    addDebugEvent('native_recorder_stop_requested', { reason });
+    finishNativeRecording(reason).catch((error) => {
+      addDebugEvent('native_recording_finish_error', String(error));
+      setStatus('error', String(error));
+      recordingFinishing = false;
+      recordingTransitionInFlight = false;
+    });
+    restoreDuckingImmediately();
+    return true;
+  }
+
   if (recorder?.state === 'recording') {
     recordingFinishing = true;
     addDebugEvent('recorder_stop_requested', { reason, state: recorder.state });
@@ -1220,6 +1258,39 @@ function requestStopRecording(reason: string) {
     return true;
   }
   return false;
+}
+
+function shouldUseNativeMic() {
+  return isTauriRuntime && nativeMicEnabled && !isStreamingActive();
+}
+
+async function finishNativeRecording(reason: string) {
+  try {
+    addDebugEvent('native_recording_finish_start', { reason });
+    setStatus('working', `Transcribing native recording with ${providerLabel()}…`);
+    const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
+    const bytes = await invoke<number[]>('stop_native_recording');
+    addDebugEvent('native_recording_audio_ready', { bytes: bytes.length, durationMs });
+    const text = await invoke<string>('transcribe_and_paste', {
+      provider: transcriptionProvider,
+      apiKey: activeTranscriptionKey(),
+      audioBytes: bytes,
+      vocabularyPrompt: buildVocabularyPrompt(),
+    });
+    addDebugEvent('native_transcription_result', { text, length: text.length });
+    const stats = addHistory(text, durationMs);
+    rewriteInput.value = text;
+    setStatus('success', `Native mic pasted: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+  } finally {
+    recordingStartedAt = 0;
+    recordingFinishing = false;
+    recordingTransitionInFlight = false;
+    miniWidget.classList.remove('shortcut-active');
+    await restoreAudioAfterDelay();
+    if (pauseBackgroundMediaEnabled && isTauriRuntime) {
+      await invoke('resume_background_media');
+    }
+  }
 }
 
 function isStreamingActive(): boolean {

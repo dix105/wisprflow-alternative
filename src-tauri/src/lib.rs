@@ -1,8 +1,12 @@
 use arboard::Clipboard;
+#[cfg(windows)]
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
-use std::{collections::HashSet, sync::{Mutex, OnceLock, atomic::{AtomicBool, Ordering}}};
+use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::{collections::HashSet, sync::atomic::{AtomicBool, Ordering}};
 use std::{fs, path::PathBuf, thread, time::Duration};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -43,6 +47,17 @@ static HOOK_STARTED: AtomicBool = AtomicBool::new(false);
 static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 #[cfg(windows)]
 static HOOK_STATE: OnceLock<Mutex<PushToTalkHookState>> = OnceLock::new();
+
+#[cfg(windows)]
+static NATIVE_RECORDER: OnceLock<Mutex<Option<NativeRecordingState>>> = OnceLock::new();
+
+#[cfg(windows)]
+struct NativeRecordingState {
+    stream: cpal::Stream,
+    samples: Arc<Mutex<Vec<i16>>>,
+    sample_rate: u32,
+    channels: u16,
+}
 
 #[cfg(windows)]
 const HOTKEY_ID: i32 = 0x4644;
@@ -128,6 +143,23 @@ async fn transcribe_and_paste(
     Ok(text)
 }
 
+
+fn audio_part(audio_bytes: Vec<u8>) -> Result<Part, String> {
+    let filename = if is_wav(&audio_bytes) { "dictation.wav" } else { "dictation.webm" };
+    Part::bytes(audio_bytes)
+        .file_name(filename.to_string())
+        .mime_str(if filename.ends_with(".wav") { "audio/wav" } else { "audio/webm" })
+        .map_err(|e| e.to_string())
+}
+
+fn audio_mime(audio_bytes: &[u8]) -> &'static str {
+    if is_wav(audio_bytes) { "audio/wav" } else { "audio/webm" }
+}
+
+fn is_wav(audio_bytes: &[u8]) -> bool {
+    audio_bytes.starts_with(b"RIFF") && audio_bytes.get(8..12) == Some(b"WAVE")
+}
+
 async fn transcribe_with_groq(
     api_key: String,
     audio_bytes: Vec<u8>,
@@ -137,10 +169,7 @@ async fn transcribe_with_groq(
         return Err("Missing Groq API key".into());
     }
 
-    let part = Part::bytes(audio_bytes)
-        .file_name("dictation.webm")
-        .mime_str("audio/webm")
-        .map_err(|e| e.to_string())?;
+    let part = audio_part(audio_bytes)?;
 
     let mut form = Form::new()
         .text("model", "whisper-large-v3-turbo")
@@ -183,15 +212,121 @@ async fn transcribe_with_groq(
     Ok(text)
 }
 
+#[tauri::command]
+fn start_native_recording() -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        return Err("Native mic capture is only available on Windows right now".into());
+    }
+
+    #[cfg(windows)]
+    {
+    let recorder = NATIVE_RECORDER.get_or_init(|| Mutex::new(None));
+    let mut guard = recorder.lock().map_err(|_| "Native recorder lock failed".to_string())?;
+    if guard.is_some() {
+        return Ok(());
+    }
+
+    let host = cpal::default_host();
+    let device = host.default_input_device().ok_or_else(|| "No default input microphone found".to_string())?;
+    let supported = device.default_input_config().map_err(|e| format!("Could not read mic config: {e}"))?;
+    let sample_rate = supported.sample_rate().0;
+    let channels = supported.channels();
+    let config: cpal::StreamConfig = supported.clone().into();
+    let samples = Arc::new(Mutex::new(Vec::<i16>::with_capacity(sample_rate as usize * channels as usize * 30)));
+    let writer = samples.clone();
+    let error_fn = |err| eprintln!("native mic stream error: {err}");
+
+    let stream = match supported.sample_format() {
+        cpal::SampleFormat::I16 => device.build_input_stream(
+            &config,
+            move |data: &[i16], _| push_i16_samples(&writer, data.iter().copied()),
+            error_fn,
+            None,
+        ),
+        cpal::SampleFormat::U16 => device.build_input_stream(
+            &config,
+            move |data: &[u16], _| push_i16_samples(&writer, data.iter().map(|sample| (*sample as i32 - 32768) as i16)),
+            error_fn,
+            None,
+        ),
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &config,
+            move |data: &[f32], _| push_i16_samples(&writer, data.iter().map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)),
+            error_fn,
+            None,
+        ),
+        other => return Err(format!("Unsupported mic sample format: {other:?}")),
+    }
+    .map_err(|e| format!("Could not open native mic stream: {e}"))?;
+
+    stream.play().map_err(|e| format!("Could not start native mic stream: {e}"))?;
+    *guard = Some(NativeRecordingState { stream, samples, sample_rate, channels });
+    Ok(())
+    }
+}
+
+#[tauri::command]
+fn stop_native_recording() -> Result<Vec<u8>, String> {
+    #[cfg(not(windows))]
+    {
+        return Err("Native mic capture is only available on Windows right now".into());
+    }
+
+    #[cfg(windows)]
+    {
+    let recorder = NATIVE_RECORDER.get_or_init(|| Mutex::new(None));
+    let state = recorder.lock().map_err(|_| "Native recorder lock failed".to_string())?.take();
+    let Some(state) = state else { return Err("Native recording was not active".into()); };
+    drop(state.stream);
+    let samples = state.samples.lock().map_err(|_| "Native audio buffer lock failed".to_string())?.clone();
+    if samples.is_empty() {
+        return Err("Native recording captured no audio".into());
+    }
+    Ok(wav_pcm16_bytes(&samples, state.sample_rate, state.channels))
+    }
+}
+
+#[cfg(windows)]
+fn push_i16_samples<I>(samples: &Arc<Mutex<Vec<i16>>>, input: I)
+where
+    I: IntoIterator<Item = i16>,
+{
+    if let Ok(mut guard) = samples.lock() {
+        guard.extend(input);
+    }
+}
+
+#[cfg(windows)]
+fn wav_pcm16_bytes(samples: &[i16], sample_rate: u32, channels: u16) -> Vec<u8> {
+    let data_len = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    let byte_rate = sample_rate * channels as u32 * 2;
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    let block_align = channels * 2;
+    out.extend_from_slice(&block_align.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples {
+        out.extend_from_slice(&sample.to_le_bytes());
+    }
+    out
+}
+
 async fn transcribe_with_elevenlabs(api_key: String, audio_bytes: Vec<u8>) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Err("Missing ElevenLabs API key".into());
     }
 
-    let part = Part::bytes(audio_bytes)
-        .file_name("dictation.webm")
-        .mime_str("audio/webm")
-        .map_err(|e| e.to_string())?;
+    let part = audio_part(audio_bytes)?;
 
     let form = Form::new()
         .text("model_id", "scribe_v2")
@@ -233,10 +368,7 @@ async fn transcribe_with_sarvam(api_key: String, audio_bytes: Vec<u8>) -> Result
         return Err("Missing Sarvam API key".into());
     }
 
-    let part = Part::bytes(audio_bytes)
-        .file_name("dictation.webm")
-        .mime_str("audio/webm")
-        .map_err(|e| e.to_string())?;
+    let part = audio_part(audio_bytes)?;
 
     let form = Form::new()
         .text("model", "saaras:v3")
@@ -286,7 +418,7 @@ async fn transcribe_with_deepgram(api_key: String, audio_bytes: Vec<u8>) -> Resu
     let response = client
         .post("https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en")
         .header("Authorization", format!("Token {}", api_key.trim()))
-        .header("Content-Type", "audio/webm")
+        .header("Content-Type", audio_mime(&audio_bytes))
         .body(audio_bytes)
         .send()
         .await
@@ -933,6 +1065,8 @@ pub fn run() {
             get_transcripts_path,
             install_push_to_talk_hook,
             is_push_to_talk_pressed,
+            start_native_recording,
+            stop_native_recording,
             start_audio_ducking,
             restore_audio_ducking,
             pause_background_media,
