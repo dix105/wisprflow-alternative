@@ -17,6 +17,7 @@ const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const RECORDING_MODE_KEY = 'flowDeskRecordingMode';
 const AUDIO_DUCKING_VOLUME_KEY = 'flowDeskAudioDuckingVolume';
+const FAST_MIC_KEY = 'flowDeskFastMic';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
 const AUDIO_RESTORE_DELAY_MS = 150;
@@ -57,6 +58,7 @@ let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
 let audioDuckingEnabled = true;
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
+let fastMicEnabled = localStorage.getItem(FAST_MIC_KEY) === 'true';
 let releasePollActive = false;
 let recordingMode = (localStorage.getItem(RECORDING_MODE_KEY) as RecordingMode) || 'hold';
 let audioDuckingVolume = Number(localStorage.getItem(AUDIO_DUCKING_VOLUME_KEY) || '35');
@@ -80,6 +82,8 @@ let waveformFrame = 0;
 let waveformData: Uint8Array<ArrayBuffer> | null = null;
 let waveformLastLogAt = 0;
 let waveformPeakLevel = 0;
+let warmMicStream: MediaStream | null = null;
+let warmMicPromise: Promise<MediaStream> | null = null;
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
 const numberFormatter = new Intl.NumberFormat();
 
@@ -222,7 +226,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" type="button">☷ General</button><button type="button">▭ System</button><button type="button"># Vibe coding</button><button type="button">⚗ Experimental</button><hr><p>ACCOUNT</p><button type="button">◎ Account</button><button type="button">♙ Team</button><button type="button">▰ Plans and Billing</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the mic warm so recording starts almost instantly.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
       </section>
     </aside>
 
@@ -260,6 +264,7 @@ const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
 const pauseBackgroundMediaInput = document.querySelector<HTMLInputElement>('#pauseBackgroundMedia')!;
+const fastMicInput = document.querySelector<HTMLInputElement>('#fastMic')!;
 const recordingModeInput = document.querySelector<HTMLSelectElement>('#recordingMode')!;
 const audioDuckingVolumeInput = document.querySelector<HTMLInputElement>('#audioDuckingVolume')!;
 const audioDuckingVolumeValue = document.querySelector<HTMLElement>('#audioDuckingVolumeValue')!;
@@ -297,11 +302,13 @@ renderPolishShortcut(polishShortcut);
 renderHistory();
 renderStats();
 pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
+fastMicInput.checked = fastMicEnabled;
 recordingModeInput.value = recordingMode;
 audioDuckingVolumeInput.value = String(audioDuckingVolume);
 audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
 hydrateRewriteFromHistory();
 setupPushToTalkListeners();
+if (fastMicEnabled) setTimeout(() => warmUpMic().catch(() => {}), 250);
 
 // Load full history from disk (async, replaces localStorage snapshot)
 // Wrapped in setTimeout to ensure it never blocks shortcut registration
@@ -474,6 +481,19 @@ pauseBackgroundMediaInput.addEventListener('change', () => {
   pauseBackgroundMediaEnabled = pauseBackgroundMediaInput.checked;
   localStorage.setItem(MEDIA_PAUSE_KEY, String(pauseBackgroundMediaEnabled));
   setStatus('success', pauseBackgroundMediaEnabled ? 'Background media pause enabled.' : 'Background media pause disabled.');
+});
+
+fastMicInput.addEventListener('change', () => {
+  fastMicEnabled = fastMicInput.checked;
+  localStorage.setItem(FAST_MIC_KEY, String(fastMicEnabled));
+  if (fastMicEnabled) {
+    warmUpMic()
+      .then(() => setStatus('success', 'Fast mic mode enabled. Recording will start faster.'))
+      .catch((error) => setStatus('error', `Fast mic failed: ${String(error)}`));
+  } else {
+    releaseWarmMic();
+    setStatus('success', 'Fast mic mode disabled.');
+  }
 });
 
 recordingModeInput.addEventListener('change', () => {
@@ -710,6 +730,55 @@ function startWaveformMonitor(stream: MediaStream) {
   tick();
 }
 
+async function warmUpMic() {
+  if (!isTauriRuntime && !fastMicEnabled) return null;
+  if (warmMicStream && warmMicStream.getAudioTracks().some((track) => track.readyState === 'live')) {
+    return warmMicStream;
+  }
+  if (warmMicPromise) return warmMicPromise;
+
+  addDebugEvent('fast_mic_warmup_start');
+  warmMicPromise = navigator.mediaDevices.getUserMedia({ audio: true })
+    .then((stream) => {
+      warmMicStream = stream;
+      addDebugEvent('fast_mic_warmup_ready', { trackCount: stream.getAudioTracks().length });
+      return stream;
+    })
+    .catch((error) => {
+      addDebugEvent('fast_mic_warmup_error', String(error));
+      throw error;
+    })
+    .finally(() => {
+      warmMicPromise = null;
+    });
+
+  return warmMicPromise;
+}
+
+async function getRecordingStream() {
+  if (!fastMicEnabled) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return { stream, warm: false };
+  }
+
+  try {
+    const stream = await warmUpMic();
+    if (stream) return { stream, warm: true };
+  } catch (error) {
+    addDebugEvent('fast_mic_fallback_normal_open', String(error));
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  return { stream, warm: false };
+}
+
+function releaseWarmMic() {
+  if (!warmMicStream) return;
+  warmMicStream.getTracks().forEach((track) => track.stop());
+  warmMicStream = null;
+  addDebugEvent('fast_mic_released');
+}
+
 function stopWaveformMonitor() {
   if (waveformFrame || waveformContext || waveformAnalyser) addDebugEvent('waveform_monitor_stop');
   if (waveformFrame) window.cancelAnimationFrame(waveformFrame);
@@ -758,10 +827,10 @@ function shortcutFromEvent(event: KeyboardEvent) {
 
   const parts = shortcutModifierParts(event);
 
-  // Global dictation hotkeys should not be plain letters like "Z" because that
-  // hijacks normal typing. Require at least one modifier before accepting.
-  if (parts.length === 0) {
-    setStatus('idle', 'Hold Ctrl, Alt, or Shift, then press the final key.');
+  // Plain letters hijack normal typing. Single function keys like F16 are safe
+  // and useful for dedicated macro keys, so allow them without modifiers.
+  if (parts.length === 0 && !isStandaloneShortcutKey(key)) {
+    setStatus('idle', 'Press a function key like F16, or hold Ctrl/Alt/Shift and press a key.');
     return '';
   }
 
@@ -816,6 +885,10 @@ function normalizeKey(key: string) {
   if (key === 'Shift') return 'Shift';
   if (key.length === 1) return key.toUpperCase();
   return key;
+}
+
+function isStandaloneShortcutKey(key: string) {
+  return /^F([1-9]|1\d|2[0-4])$/.test(key) || ['Pause', 'Insert', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
 }
 
 async function installShortcut(next: string) {
@@ -1078,8 +1151,8 @@ async function toggleRecording() {
       isAudioDucked = true;
     }
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    addDebugEvent('mic_stream_acquired', { trackCount: stream.getAudioTracks().length });
+    const { stream, warm } = await getRecordingStream();
+    addDebugEvent('mic_stream_acquired', { trackCount: stream.getAudioTracks().length, warm });
     startWaveformMonitor(stream);
     chunks = [];
     const mimeType = pickMimeType();
@@ -1097,8 +1170,12 @@ async function toggleRecording() {
 
     recorder.addEventListener('stop', async () => {
       addDebugEvent('media_recorder_stop_event', { chunks: chunks.map((chunk) => chunk instanceof Blob ? { size: chunk.size, type: chunk.type } : String(chunk)), streaming });
-      stream.getTracks().forEach((track) => track.stop());
-      addDebugEvent('mic_tracks_stopped');
+      if (!fastMicEnabled || stream !== warmMicStream) {
+        stream.getTracks().forEach((track) => track.stop());
+        addDebugEvent('mic_tracks_stopped');
+      } else {
+        addDebugEvent('fast_mic_tracks_kept_warm');
+      }
       if (streaming) {
         await transcribeStreamingResult();
       } else {

@@ -558,8 +558,8 @@ fn parse_shortcut_keys(shortcut: &str) -> Result<Vec<u32>, String> {
         .map(|part| shortcut_part_vk(part.trim()).ok_or_else(|| format!("Unsupported shortcut key: {part}")))
         .collect::<Result<Vec<_>, _>>()?;
 
-    if keys.len() < 2 {
-        return Err("Shortcut must include at least one modifier and one key".into());
+    if keys.is_empty() {
+        return Err("Shortcut must include a key".into());
     }
 
     Ok(keys)
@@ -573,6 +573,11 @@ fn shortcut_part_vk(part: &str) -> Option<u32> {
         "Shift" => Some(VK_SHIFT.0 as u32),
         "Space" => Some(VK_SPACE.0 as u32),
         "Enter" | "Return" => Some(VK_RETURN.0 as u32),
+        key if key.len() >= 2 && key.starts_with('F') => key[1..]
+            .parse::<u32>()
+            .ok()
+            .filter(|number| (1..=24).contains(number))
+            .map(|number| 0x70 + number - 1),
         key if key.len() == 1 => key.chars().next().map(|char| char.to_ascii_uppercase() as u32),
         _ => None,
     }
