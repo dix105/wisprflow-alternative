@@ -15,15 +15,19 @@ const DEEPGRAM_KEY = 'deepgramApiKey';
 const DEEPGRAM_STREAMING_KEY = 'deepgramStreaming';
 const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
+const RECORDING_MODE_KEY = 'flowDeskRecordingMode';
+const AUDIO_DUCKING_VOLUME_KEY = 'flowDeskAudioDuckingVolume';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
 const AUDIO_RESTORE_DELAY_MS = 150;
 const RECORDING_TOGGLE_DEBOUNCE_MS = 900;
+const PUSH_TO_TALK_RELEASE_CONFIRM_MS = 140;
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
 type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
 type RewriteMode = 'clean' | 'polish' | 'professional' | 'shorter' | 'friendly';
 type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam' | 'deepgram';
+type RecordingMode = 'hold' | 'toggle';
 
 type HistoryItem = {
   id: string;
@@ -53,6 +57,11 @@ let isAudioDucked = false;
 let totalWordsSpoken = loadTotalWordsSpoken(historyItems);
 let audioDuckingEnabled = true;
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
+let releasePollActive = false;
+let recordingMode = (localStorage.getItem(RECORDING_MODE_KEY) as RecordingMode) || 'hold';
+let audioDuckingVolume = Number(localStorage.getItem(AUDIO_DUCKING_VOLUME_KEY) || '35');
+if (!Number.isFinite(audioDuckingVolume)) audioDuckingVolume = 35;
+audioDuckingVolume = Math.min(100, Math.max(0, audioDuckingVolume));
 let deepgramStreamingEnabled = localStorage.getItem(DEEPGRAM_STREAMING_KEY) === 'true';
 let streamingSocket: WebSocket | null = null;
 let streamingTranscript = '';
@@ -213,7 +222,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" type="button">☷ General</button><button type="button">▭ System</button><button type="button"># Vibe coding</button><button type="button">⚗ Experimental</button><hr><p>ACCOUNT</p><button type="button">◎ Account</button><button type="button">♙ Team</button><button type="button">▰ Plans and Billing</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Press once to start, press again to stop</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
       </section>
     </aside>
 
@@ -251,6 +260,9 @@ const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
 const pauseBackgroundMediaInput = document.querySelector<HTMLInputElement>('#pauseBackgroundMedia')!;
+const recordingModeInput = document.querySelector<HTMLSelectElement>('#recordingMode')!;
+const audioDuckingVolumeInput = document.querySelector<HTMLInputElement>('#audioDuckingVolume')!;
+const audioDuckingVolumeValue = document.querySelector<HTMLElement>('#audioDuckingVolumeValue')!;
 const testAudioDuckingButton = document.querySelector<HTMLButtonElement>('#testAudioDucking')!;
 const statusBox = document.querySelector<HTMLElement>('#status')!;
 const totalWordsSpokenEl = document.querySelector<HTMLElement>('#totalWordsSpoken')!;
@@ -285,6 +297,9 @@ renderPolishShortcut(polishShortcut);
 renderHistory();
 renderStats();
 pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
+recordingModeInput.value = recordingMode;
+audioDuckingVolumeInput.value = String(audioDuckingVolume);
+audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
 hydrateRewriteFromHistory();
 setupPushToTalkListeners();
 
@@ -459,6 +474,18 @@ pauseBackgroundMediaInput.addEventListener('change', () => {
   pauseBackgroundMediaEnabled = pauseBackgroundMediaInput.checked;
   localStorage.setItem(MEDIA_PAUSE_KEY, String(pauseBackgroundMediaEnabled));
   setStatus('success', pauseBackgroundMediaEnabled ? 'Background media pause enabled.' : 'Background media pause disabled.');
+});
+
+recordingModeInput.addEventListener('change', () => {
+  recordingMode = recordingModeInput.value as RecordingMode;
+  localStorage.setItem(RECORDING_MODE_KEY, recordingMode);
+  setStatus('success', recordingMode === 'hold' ? 'Dictation mode: hold shortcut to record.' : 'Dictation mode: press once to start, press again to stop.');
+});
+
+audioDuckingVolumeInput.addEventListener('input', () => {
+  audioDuckingVolume = Number(audioDuckingVolumeInput.value);
+  localStorage.setItem(AUDIO_DUCKING_VOLUME_KEY, String(audioDuckingVolume));
+  audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
 });
 
 autostartInput.addEventListener('change', async () => {
@@ -807,9 +834,9 @@ async function installShortcut(next: string) {
       shortcut = next;
       localStorage.setItem('shortcut', next);
       renderShortcut(next);
-      setStatus('success', `Toggle shortcut registered: ${formatShortcutLabel(next)}. Press once to start, press again to stop.`);
-      addDebugEvent('push_to_talk_hook_registered', { shortcut: next });
-      addDebugEvent('global_shortcut_backup_skipped_native_toggle_active', { shortcut: next });
+      setStatus('success', `${recordingMode === 'hold' ? 'Hold-to-talk' : 'Toggle'} shortcut registered: ${formatShortcutLabel(next)}.`);
+      addDebugEvent('push_to_talk_hook_registered', { shortcut: next, mode: recordingMode });
+      addDebugEvent('global_shortcut_backup_skipped_native_mode_active', { shortcut: next, mode: recordingMode });
       return;
     } catch (error) {
       addDebugEvent('push_to_talk_hook_failed_falling_back', String(error));
@@ -924,26 +951,33 @@ async function setupPushToTalkListeners() {
   });
   await listen('push-to-talk-up', () => {
     addDebugEvent('push_to_talk_up_event');
-    addDebugEvent('push_to_talk_up_ignored_toggle_mode');
+    if (recordingMode === 'hold') stopRecordingFromPushToTalk();
+    else addDebugEvent('push_to_talk_up_ignored_toggle_mode');
   });
 }
 
 function startRecordingFromPushToTalk() {
-  addDebugEvent('push_to_talk_toggle_event', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
+  addDebugEvent('push_to_talk_event', { mode: recordingMode, recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
 
-  if (requestStopRecording('push_to_talk_toggle')) {
-    miniWidget.classList.remove('shortcut-active');
-    return;
-  }
+  if (recordingMode === 'toggle') {
+    if (requestStopRecording('push_to_talk_toggle')) {
+      miniWidget.classList.remove('shortcut-active');
+      return;
+    }
 
-  if (recordingTransitionInFlight) {
-    stopAfterStartRequested = true;
-    addDebugEvent('push_to_talk_toggle_stop_after_start_requested');
-    return;
-  }
+    if (recordingTransitionInFlight) {
+      stopAfterStartRequested = true;
+      addDebugEvent('push_to_talk_toggle_stop_after_start_requested');
+      return;
+    }
 
-  if (recordingFinishing) {
-    addDebugEvent('push_to_talk_toggle_ignored_finishing');
+    if (recordingFinishing) {
+      addDebugEvent('push_to_talk_toggle_ignored_finishing');
+      return;
+    }
+  } else if (recorder?.state === 'recording' || recordingTransitionInFlight || recordingFinishing) {
+    addDebugEvent('push_to_talk_down_ignored', { recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
+    beginShortcutReleasePoll('push_to_talk_down_ignored');
     return;
   }
 
@@ -952,6 +986,44 @@ function startRecordingFromPushToTalk() {
   miniWidgetLabel.textContent = 'Shortcut active';
   miniWidgetState.textContent = 'Opening mic';
   toggleRecording();
+  if (recordingMode === 'hold') beginShortcutReleasePoll('push_to_talk_down');
+}
+
+async function beginShortcutReleasePoll(source: string) {
+  if (!isTauriRuntime || releasePollActive || recordingMode !== 'hold') return;
+  releasePollActive = true;
+  addDebugEvent('shortcut_release_poll_start', { source });
+
+  try {
+    for (let attempt = 0; attempt < 1200; attempt += 1) {
+      await sleep(50);
+      const stillPressed = await invoke<boolean>('is_push_to_talk_pressed');
+      if (!stillPressed) {
+        addDebugEvent('shortcut_release_poll_released', { source, attempt });
+        await stopRecordingFromPushToTalk();
+        return;
+      }
+      if (attempt % 20 === 0) addDebugEvent('shortcut_release_poll_still_pressed', { source, attempt });
+    }
+    addDebugEvent('shortcut_release_poll_timeout', { source });
+  } catch (error) {
+    addDebugEvent('shortcut_release_poll_error', { source, error: String(error) });
+  } finally {
+    releasePollActive = false;
+  }
+}
+
+async function stopRecordingFromPushToTalk() {
+  if (recordingMode !== 'hold') return;
+  await sleep(PUSH_TO_TALK_RELEASE_CONFIRM_MS);
+  const stillPressed = await invoke<boolean>('is_push_to_talk_pressed');
+  addDebugEvent('push_to_talk_release_check', { stillPressed, recorderState: recorder?.state || null, transition: recordingTransitionInFlight, finishing: recordingFinishing });
+  if (stillPressed) return;
+
+  miniWidget.classList.remove('shortcut-active');
+
+  if (requestStopRecording('push_to_talk_release')) return;
+  if (recordingTransitionInFlight) stopAfterStartRequested = true;
 }
 
 async function testAudioDucking() {
@@ -962,7 +1034,7 @@ async function testAudioDucking() {
 
   try {
     setStatus('working', 'Testing audio ducking…');
-    await invoke('start_audio_ducking');
+    await invoke('start_audio_ducking', { targetVolume: audioDuckingVolume / 100 });
     await sleep(1800);
     await invoke('restore_audio_ducking');
     setStatus('success', 'Audio ducking test finished and volume restored.');
@@ -1002,7 +1074,7 @@ async function toggleRecording() {
     }
 
     if (audioDuckingEnabled && isTauriRuntime && !isAudioDucked) {
-      await invoke('start_audio_ducking');
+      await invoke('start_audio_ducking', { targetVolume: audioDuckingVolume / 100 });
       isAudioDucked = true;
     }
 
@@ -1044,7 +1116,7 @@ async function toggleRecording() {
       recorder.start();
     }
     addDebugEvent('media_recorder_started', { state: recorder.state, streaming, mimeType: recorder.mimeType });
-    setStatus('recording', 'Recording… press shortcut again or click widget to stop.');
+    setStatus('recording', recordingMode === 'hold' ? 'Recording… release shortcut to stop.' : 'Recording… press shortcut again or click widget to stop.');
     if (stopAfterStartRequested) {
       stopAfterStartRequested = false;
       requestStopRecording('stop_after_start_requested');
@@ -1067,6 +1139,7 @@ function requestStopRecording(reason: string) {
     recordingFinishing = true;
     addDebugEvent('recorder_stop_requested', { reason, state: recorder.state });
     recorder.stop();
+    restoreDuckingImmediately();
     return true;
   }
   return false;
@@ -1331,8 +1404,15 @@ async function transcribeAndPaste() {
 async function restoreAudioAfterDelay() {
   if (!audioDuckingEnabled || !isTauriRuntime || !isAudioDucked) return;
   await sleep(AUDIO_RESTORE_DELAY_MS);
-  await invoke('restore_audio_ducking');
+  await restoreDuckingImmediately();
+}
+
+function restoreDuckingImmediately() {
+  if (!audioDuckingEnabled || !isTauriRuntime || !isAudioDucked) return;
   isAudioDucked = false;
+  invoke('restore_audio_ducking')
+    .then(() => addDebugEvent('audio_ducking_restored_after_recording_stop'))
+    .catch((error) => addDebugEvent('audio_ducking_restore_failed', String(error)));
 }
 
 function sleep(ms: number) {
