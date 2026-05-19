@@ -368,6 +368,18 @@ startFromScratchpadButton.addEventListener('click', () => toggleRecording());
 testAudioDuckingButton.addEventListener('click', () => testAudioDucking());
 
 window.addEventListener('keydown', async (event) => {
+  if (!captureTarget && shortcutMatchesEvent(shortcut, event)) {
+    event.preventDefault();
+    if (!isTauriRuntime) toggleRecording();
+    return;
+  }
+
+  if (!captureTarget && shortcutMatchesEvent(polishShortcut, event)) {
+    event.preventDefault();
+    if (!isTauriRuntime) polishSelectedText();
+    return;
+  }
+
   if (!captureTarget && event.key === 'Escape') {
     closeSettings();
     return;
@@ -393,6 +405,22 @@ window.addEventListener('keydown', async (event) => {
 
   finishShortcutCapture(next, true);
 }, true);
+
+function shortcutMatchesEvent(value: string, event: KeyboardEvent) {
+  const parts = value.split('+').map((part) => part.trim()).filter(Boolean);
+  const finalKey = parts.at(-1);
+  if (!finalKey) return false;
+
+  const wantsCtrlOrMeta = parts.includes('CommandOrControl');
+  const wantsAlt = parts.includes('Alt');
+  const wantsShift = parts.includes('Shift');
+  const key = normalizeKey(event.key);
+
+  return key === finalKey
+    && (!wantsCtrlOrMeta || event.ctrlKey || event.metaKey)
+    && (!wantsAlt || event.altKey)
+    && (!wantsShift || event.shiftKey);
+}
 
 window.addEventListener('keyup', (event) => {
   if (!captureTarget) return;
