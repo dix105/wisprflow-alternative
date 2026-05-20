@@ -13,6 +13,8 @@ use tauri::{
     tray::TrayIconBuilder,
     Manager, WindowEvent,
 };
+#[cfg(windows)]
+use tauri::Emitter;
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(windows)]
 use windows::Win32::{
@@ -920,7 +922,7 @@ fn restore_system_volume() -> Result<(), String> {
 
 #[cfg(windows)]
 unsafe fn default_audio_endpoint() -> Result<IAudioEndpointVolume, String> {
-    CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
+    let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
     let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
         .map_err(|e| format!("Could not create audio device enumerator: {e}"))?;
     let device = enumerator
