@@ -1,7 +1,6 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: white;
   background: transparent;
+  color: white;
 }
 
 html,
@@ -22,104 +21,57 @@ body {
   background: transparent;
 }
 
-.dictation-bar {
-  height: 44px;
-  min-width: 238px;
-  max-width: 286px;
-  padding: 0 15px 0 18px;
+.wave-pill {
+  width: 112px;
+  height: 36px;
+  padding: 0 13px;
   border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 13px;
+  gap: 5px;
   background: rgba(0, 0, 0, 0.94);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow:
-    0 16px 42px rgba(0, 0, 0, 0.34),
+    0 12px 32px rgba(0, 0, 0, 0.32),
     inset 0 1px 0 rgba(255, 255, 255, 0.11);
   backdrop-filter: blur(18px);
 }
 
-#label {
-  min-width: 58px;
-  font-size: 16px;
-  font-weight: 760;
-  letter-spacing: -0.035em;
-  line-height: 1;
-}
-
-.dictation-bar kbd {
-  border: 0;
-  background: transparent;
-  color: #f2d7ff;
-  font: inherit;
-  font-size: 16px;
-  font-weight: 850;
-  letter-spacing: -0.025em;
-  line-height: 1;
-  text-shadow: 0 0 16px rgba(238, 185, 255, 0.42);
-  white-space: nowrap;
-}
-
-.waveform {
-  width: 54px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
-
-.waveform i {
-  width: 4px;
-  height: 4px;
+.wave-pill i {
+  width: 5px;
+  height: var(--dot-height, 4px);
+  min-height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.84);
-  opacity: 0.8;
+  background: rgba(255, 255, 255, 0.9);
+  opacity: 0.58;
   transform-origin: center;
-  transition: height 80ms ease, opacity 80ms ease, transform 80ms ease;
+  transition: height 72ms linear, opacity 72ms linear, background-color 120ms ease;
 }
 
-.overlay.ready .waveform i,
-.overlay.inserted .waveform i {
-  height: 4px;
+.overlay.processing .wave-pill i,
+.overlay.polishing .wave-pill i {
+  animation: thinking 760ms ease-in-out infinite;
 }
 
-.overlay.listening .waveform i {
-  animation: waveform 760ms ease-in-out infinite;
-}
+.overlay.processing .wave-pill i:nth-child(2),
+.overlay.polishing .wave-pill i:nth-child(2) { animation-delay: 70ms; }
+.overlay.processing .wave-pill i:nth-child(3),
+.overlay.polishing .wave-pill i:nth-child(3) { animation-delay: 140ms; }
+.overlay.processing .wave-pill i:nth-child(4),
+.overlay.polishing .wave-pill i:nth-child(4) { animation-delay: 210ms; }
+.overlay.processing .wave-pill i:nth-child(5),
+.overlay.polishing .wave-pill i:nth-child(5) { animation-delay: 280ms; }
+.overlay.processing .wave-pill i:nth-child(6),
+.overlay.polishing .wave-pill i:nth-child(6) { animation-delay: 350ms; }
+.overlay.processing .wave-pill i:nth-child(7),
+.overlay.polishing .wave-pill i:nth-child(7) { animation-delay: 420ms; }
 
-.overlay.listening .waveform i:nth-child(2) { animation-delay: 65ms; }
-.overlay.listening .waveform i:nth-child(3) { animation-delay: 130ms; }
-.overlay.listening .waveform i:nth-child(4) { animation-delay: 195ms; }
-.overlay.listening .waveform i:nth-child(5) { animation-delay: 260ms; }
-.overlay.listening .waveform i:nth-child(6) { animation-delay: 325ms; }
-.overlay.listening .waveform i:nth-child(7) { animation-delay: 390ms; }
-
-.overlay.processing .waveform i,
-.overlay.polishing .waveform i {
-  animation: thinking 850ms ease-in-out infinite;
-}
-
-.overlay.processing .dictation-bar,
-.overlay.polishing .dictation-bar {
-  background: rgba(0, 0, 0, 0.96);
-}
-
-.overlay.inserted .dictation-bar {
-  background: rgba(0, 0, 0, 0.94);
-}
-
-.overlay.inserted #label { color: #b8ffcc; }
-.overlay.inserted .waveform i { background: #b8ffcc; }
-
-@keyframes waveform {
-  0%, 100% { height: 4px; opacity: 0.5; }
-  50% { height: 18px; opacity: 1; }
+.overlay.inserted .wave-pill i {
+  background: #b8ffcc;
 }
 
 @keyframes thinking {
-  0%, 100% { transform: scale(0.7); opacity: 0.35; }
-  50% { transform: scale(1.12); opacity: 1; }
+  0%, 100% { height: 4px; opacity: 0.38; }
+  50% { height: 18px; opacity: 1; }
 }

@@ -228,8 +228,8 @@ fn show_dictation_overlay(app: tauri::AppHandle, state: String) -> Result<(), St
         return Err("Overlay window is not available".into());
     };
 
-    let width = 300u32;
-    let height = 68u32;
+    let width = 140u32;
+    let height = 52u32;
     window
         .set_size(Size::Physical(PhysicalSize { width, height }))
         .map_err(|e| format!("Could not size overlay: {e}"))?;

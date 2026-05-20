@@ -1,6 +1,6 @@
 import './style.css';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
 
@@ -671,6 +671,12 @@ function hideDictationOverlay(delayMs = 0) {
   }, delayMs);
 }
 
+function updateDictationOverlayLevel(level: number) {
+  if (!isTauriRuntime) return;
+  emit('dictation-overlay-level', level)
+    .catch((error) => addDebugEvent('overlay_level_failed', String(error)));
+}
+
 function addDebugEvent(label: string, data?: unknown) {
   debugEvents.push({ time: new Date().toISOString(), label, data });
   debugEvents = debugEvents.slice(-300);
@@ -753,6 +759,7 @@ function startWaveformMonitor(stream: MediaStream) {
     }
 
     miniWidget.classList.toggle('speaking', volume > 0.035);
+    updateDictationOverlayLevel(level);
     bars.forEach((bar, index) => {
       const height = 12 + level * 34 * multipliers[index % multipliers.length];
       bar.style.setProperty('--bar-height', `${Math.max(10, Math.min(48, height))}px`);
