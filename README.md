@@ -16,6 +16,7 @@ Deskflow was created as a desktop-first dictation tool with a clean Flow-style i
 - Native Windows push-to-talk hook: hold shortcut to record, duck system volume, release to stop and restore
 - Optional background media pause/resume while recording
 - Auto polish mode that rewrites dictated speech before it is pasted
+- Wispr-style floating overlay pill for recording, waveform, processing, polishing, and inserted states
 - Global polish shortcut that copies selected text, polishes it, and pastes it back
 - Dictionary vocabulary hints for better spelling
 - Rewrite modes for cleaning or reshaping text
@@ -135,6 +136,12 @@ Each transcript card shows:
 Settings includes **Auto polish dictated text**. When enabled, Deskflow transcribes the recording, sends the transcript through the Polish writing rewrite mode, then pastes the polished result into the focused app. This also applies to native mic dictation and live Deepgram sessions; live streaming waits for the final transcript when auto polish is enabled so rough interim text is not pasted first.
 
 Auto polish uses the Groq API key because rewrites are powered by Groq chat completions.
+
+### Floating dictation overlay
+
+Deskflow includes a tiny transparent always-on-top overlay window. When dictation starts it shows a black pill similar to Wispr Flow, switches to an animated dotted waveform while listening, then shows processing, polishing, and inserted states before hiding.
+
+Current positioning is the reliable MVP: bottom-center of the active monitor. Exact above-caret positioning can be added later with Windows UI Automation, but some apps block caret coordinates.
 
 ### Global polish shortcut
 

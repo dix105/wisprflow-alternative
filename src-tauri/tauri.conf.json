@@ -20,6 +20,20 @@
         "resizable": true,
         "fullscreen": false,
         "center": true
+      },
+      {
+        "label": "overlay",
+        "title": "FlowDesk Overlay",
+        "url": "overlay.html",
+        "width": 320,
+        "height": 124,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": {
