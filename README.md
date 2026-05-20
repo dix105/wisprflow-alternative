@@ -15,6 +15,7 @@ Deskflow was created as a desktop-first dictation tool with a clean Flow-style i
 - Dictation stats: words per minute, average words, and total words spoken
 - Native Windows push-to-talk hook: hold shortcut to record, duck system volume, release to stop and restore
 - Optional background media pause/resume while recording
+- Auto polish mode that rewrites dictated speech before it is pasted
 - Global polish shortcut that copies selected text, polishes it, and pastes it back
 - Dictionary vocabulary hints for better spelling
 - Rewrite modes for cleaning or reshaping text
@@ -129,6 +130,12 @@ Each transcript card shows:
 - Copy action
 - Rewrite action
 
+### Auto polish dictated text
+
+Settings includes **Auto polish dictated text**. When enabled, Deskflow transcribes the recording, sends the transcript through the Polish writing rewrite mode, then pastes the polished result into the focused app. This also applies to native mic dictation and live Deepgram sessions; live streaming waits for the final transcript when auto polish is enabled so rough interim text is not pasted first.
+
+Auto polish uses the Groq API key because rewrites are powered by Groq chat completions.
+
 ### Global polish shortcut
 
 Settings includes a separate **Polish text shortcut**. Default:
@@ -147,6 +154,7 @@ The shortcut is stored locally under:
 
 ```txt
 flowDeskPolishShortcut
+flowDeskAutoPolish
 ```
 
 ### Background media controls
@@ -263,8 +271,10 @@ Deskflow currently stores development settings locally in the WebView:
 ```txt
 groqApiKey              # Groq API key
 elevenLabsApiKey        # ElevenLabs API key
-flowDeskProvider        # active provider: groq or elevenlabs
+flowDeskProvider        # active provider: groq, elevenlabs, sarvam, or deepgram
 shortcut                # global shortcut
+flowDeskPolishShortcut  # selected-text polish shortcut
+flowDeskAutoPolish      # auto-polish dictated text before paste
 flowDeskHistory         # recent transcripts
 flowDeskVocabulary      # dictionary terms
 ```

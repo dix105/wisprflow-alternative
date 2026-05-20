@@ -20,6 +20,7 @@ const AUDIO_DUCKING_VOLUME_KEY = 'flowDeskAudioDuckingVolume';
 const FAST_MIC_KEY = 'flowDeskFastMic';
 const NATIVE_MIC_KEY = 'flowDeskNativeMic';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
+const AUTO_POLISH_KEY = 'flowDeskAutoPolish';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
 const AUDIO_RESTORE_DELAY_MS = 150;
 const RECORDING_TOGGLE_DEBOUNCE_MS = 900;
@@ -61,6 +62,7 @@ let audioDuckingEnabled = true;
 let pauseBackgroundMediaEnabled = localStorage.getItem(MEDIA_PAUSE_KEY) === 'true';
 let fastMicEnabled = localStorage.getItem(FAST_MIC_KEY) === 'true';
 let nativeMicEnabled = localStorage.getItem(NATIVE_MIC_KEY) !== 'false';
+let autoPolishEnabled = localStorage.getItem(AUTO_POLISH_KEY) === 'true';
 let recordingMode = (localStorage.getItem(RECORDING_MODE_KEY) as RecordingMode) || 'hold';
 let audioDuckingVolume = Number(localStorage.getItem(AUDIO_DUCKING_VOLUME_KEY) || '35');
 if (!Number.isFinite(audioDuckingVolume)) audioDuckingVolume = 35;
@@ -227,7 +229,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" type="button">☷ General</button><button type="button">▭ System</button><button type="button"># Vibe coding</button><button type="button">⚗ Experimental</button><hr><p>ACCOUNT</p><button type="button">◎ Account</button><button type="button">♙ Team</button><button type="button">▰ Plans and Billing</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2>General</h2></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></div>
       </section>
     </aside>
 
@@ -265,6 +267,7 @@ const drawerBackdrop = document.querySelector<HTMLDivElement>('#drawerBackdrop')
 const settingsDrawer = document.querySelector<HTMLElement>('#settingsDrawer')!;
 const autostartInput = document.querySelector<HTMLInputElement>('#autostart')!;
 const pauseBackgroundMediaInput = document.querySelector<HTMLInputElement>('#pauseBackgroundMedia')!;
+const autoPolishInput = document.querySelector<HTMLInputElement>('#autoPolish')!;
 const fastMicInput = document.querySelector<HTMLInputElement>('#fastMic')!;
 const nativeMicInput = document.querySelector<HTMLInputElement>('#nativeMic')!;
 const recordingModeInput = document.querySelector<HTMLSelectElement>('#recordingMode')!;
@@ -304,6 +307,7 @@ renderPolishShortcut(polishShortcut);
 renderHistory();
 renderStats();
 pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
+autoPolishInput.checked = autoPolishEnabled;
 fastMicInput.checked = fastMicEnabled;
 nativeMicInput.checked = nativeMicEnabled;
 recordingModeInput.value = recordingMode;
@@ -479,6 +483,12 @@ window.addEventListener('keyup', (event) => {
   updateShortcutModifierState(event, false);
   renderShortcutPreview();
 }, true);
+
+autoPolishInput.addEventListener('change', () => {
+  autoPolishEnabled = autoPolishInput.checked;
+  localStorage.setItem(AUTO_POLISH_KEY, String(autoPolishEnabled));
+  setStatus('success', autoPolishEnabled ? 'Auto polish enabled for dictated text.' : 'Auto polish disabled. Dictation will paste raw transcripts.');
+});
 
 pauseBackgroundMediaInput.addEventListener('change', () => {
   pauseBackgroundMediaEnabled = pauseBackgroundMediaInput.checked;
@@ -1240,16 +1250,28 @@ async function finishNativeRecording(reason: string) {
     const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
     const bytes = await invoke<number[]>('stop_native_recording');
     addDebugEvent('native_recording_audio_ready', { bytes: bytes.length, durationMs });
-    const text = await invoke<string>('transcribe_and_paste', {
-      provider: transcriptionProvider,
-      apiKey: activeTranscriptionKey(),
-      audioBytes: bytes,
-      vocabularyPrompt: buildVocabularyPrompt(),
-    });
+    const text = autoPolishEnabled
+      ? await invoke<string>('transcribe_audio', {
+        provider: transcriptionProvider,
+        apiKey: activeTranscriptionKey(),
+        audioBytes: bytes,
+        vocabularyPrompt: buildVocabularyPrompt(),
+      })
+      : await invoke<string>('transcribe_and_paste', {
+        provider: transcriptionProvider,
+        apiKey: activeTranscriptionKey(),
+        audioBytes: bytes,
+        vocabularyPrompt: buildVocabularyPrompt(),
+      });
     addDebugEvent('native_transcription_result', { text, length: text.length });
-    const stats = addHistory(text, durationMs);
-    rewriteInput.value = text;
-    setStatus('success', `Native mic pasted: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+    const finalText = await polishDictationIfEnabled(text);
+    if (autoPolishEnabled) {
+      addDebugEvent('native_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== text });
+      await pasteTextToFocusedApp(finalText);
+    }
+    const stats = addHistory(finalText, durationMs);
+    rewriteInput.value = finalText;
+    setStatus('success', `${finalText !== text ? 'Native mic polished and pasted' : 'Native mic pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
   } finally {
     recordingStartedAt = 0;
     recordingFinishing = false;
@@ -1312,7 +1334,7 @@ function openStreamingSocket() {
             ? [...streamingFinalParts, text].join(' ')
             : [...streamingFinalParts, text].join(' ');
           const delta = liveTranscript.substring(streamingLastPastedLength);
-          if (delta && isTauriRuntime) {
+          if (delta && isTauriRuntime && !autoPolishEnabled) {
             streamingPastedLive = true;
             invoke('paste_transcript', { text: delta })
               .then(() => addDebugEvent('live_paste_delta', { delta, length: delta.length }))
@@ -1445,15 +1467,17 @@ async function transcribeStreamingResult() {
     addDebugEvent('streaming_transcription_finish_result', { text, length: text.length, socketFailed: streamingSocketFailed });
 
     if (text) {
+      const finalText = await polishDictationIfEnabled(text);
+      if (finalText !== text) addDebugEvent('streaming_auto_polish_result', { text: finalText, length: finalText.length });
       if (isTauriRuntime && !streamingPastedLive) {
-        await invoke('paste_transcript', { text });
-        addDebugEvent('streaming_final_paste_full_text', { length: text.length });
+        await pasteTextToFocusedApp(finalText);
+        addDebugEvent('streaming_final_paste_full_text', { length: finalText.length, polished: finalText !== text });
       } else if (streamingPastedLive) {
         addDebugEvent('streaming_final_paste_skipped_already_live', { length: text.length });
       }
-      const stats = addHistory(text, durationMs);
-      rewriteInput.value = text;
-      setStatus('success', `Streamed and pasted: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+      const stats = addHistory(finalText, durationMs);
+      rewriteInput.value = finalText;
+      setStatus('success', `${finalText !== text ? 'Streamed, polished, and pasted' : 'Streamed and pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
     } else {
       const reason = streamingSocketFailed ? 'Live stream connection failed' : 'Live stream returned no text';
       setStatus('working', `${reason} — retrying with normal transcription…`);
@@ -1485,22 +1509,35 @@ function pickMimeType() {
 async function transcribeAndPaste() {
   try {
     addDebugEvent('normal_transcription_start', { provider: transcriptionProvider, chunks: chunks.map((chunk) => chunk instanceof Blob ? { size: chunk.size, type: chunk.type } : String(chunk)) });
-    setStatus('working', `Transcribing with ${providerLabel()} and pasting into the focused app…`);
+    setStatus('working', autoPolishEnabled ? `Transcribing with ${providerLabel()} before polish…` : `Transcribing with ${providerLabel()} and pasting into the focused app…`);
     const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
     const blob = new Blob(chunks, { type: 'audio/webm' });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
 
-    const text = await invoke<string>('transcribe_and_paste', {
-      provider: transcriptionProvider,
-      apiKey: activeTranscriptionKey(),
-      audioBytes: bytes,
-      vocabularyPrompt: buildVocabularyPrompt(),
-    });
+    const text = autoPolishEnabled
+      ? await invoke<string>('transcribe_audio', {
+        provider: transcriptionProvider,
+        apiKey: activeTranscriptionKey(),
+        audioBytes: bytes,
+        vocabularyPrompt: buildVocabularyPrompt(),
+      })
+      : await invoke<string>('transcribe_and_paste', {
+        provider: transcriptionProvider,
+        apiKey: activeTranscriptionKey(),
+        audioBytes: bytes,
+        vocabularyPrompt: buildVocabularyPrompt(),
+      });
     addDebugEvent('normal_transcription_result', { text, length: text.length });
 
-    const stats = addHistory(text, durationMs);
-    rewriteInput.value = text;
-    setStatus('success', `Pasted and saved to history: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+    const finalText = await polishDictationIfEnabled(text);
+    if (autoPolishEnabled) {
+      addDebugEvent('normal_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== text });
+      await pasteTextToFocusedApp(finalText);
+    }
+
+    const stats = addHistory(finalText, durationMs);
+    rewriteInput.value = finalText;
+    setStatus('success', `${finalText !== text ? 'Polished and pasted' : 'Pasted and saved to history'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
   } catch (error) {
     addDebugEvent('normal_transcription_error', String(error));
     setStatus('error', String(error));
@@ -1516,6 +1553,29 @@ async function transcribeAndPaste() {
       await invoke('resume_background_media');
     }
   }
+}
+
+async function polishDictationIfEnabled(text: string) {
+  if (!autoPolishEnabled) return text;
+  syncApiKey();
+  const key = apiKeyInput.value.trim();
+  if (!key) throw new Error('Auto polish needs your Groq API key in Settings.');
+
+  setStatus('working', 'Polishing dictated text before paste…');
+  const polished = await invoke<string>('rewrite_text', {
+    apiKey: key,
+    text,
+    mode: 'polish',
+  });
+  return polished.trim() || text;
+}
+
+async function pasteTextToFocusedApp(text: string) {
+  if (!isTauriRuntime) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  await invoke('paste_transcript', { text });
 }
 
 async function restoreAudioAfterDelay() {

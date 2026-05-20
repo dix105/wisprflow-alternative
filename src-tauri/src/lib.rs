@@ -128,20 +128,29 @@ struct GroqChatMessage {
 }
 
 #[tauri::command]
-async fn transcribe_and_paste(
+async fn transcribe_audio(
     provider: Option<String>,
     api_key: String,
     audio_bytes: Vec<u8>,
     vocabulary_prompt: Option<String>,
 ) -> Result<String, String> {
     let provider = provider.unwrap_or_else(|| "groq".into());
-    let text = match provider.as_str() {
-        "elevenlabs" => transcribe_with_elevenlabs(api_key, audio_bytes).await?,
-        "sarvam" => transcribe_with_sarvam(api_key, audio_bytes).await?,
-        "deepgram" => transcribe_with_deepgram(api_key, audio_bytes).await?,
-        _ => transcribe_with_groq(api_key, audio_bytes, vocabulary_prompt).await?,
-    };
+    match provider.as_str() {
+        "elevenlabs" => transcribe_with_elevenlabs(api_key, audio_bytes).await,
+        "sarvam" => transcribe_with_sarvam(api_key, audio_bytes).await,
+        "deepgram" => transcribe_with_deepgram(api_key, audio_bytes).await,
+        _ => transcribe_with_groq(api_key, audio_bytes, vocabulary_prompt).await,
+    }
+}
 
+#[tauri::command]
+async fn transcribe_and_paste(
+    provider: Option<String>,
+    api_key: String,
+    audio_bytes: Vec<u8>,
+    vocabulary_prompt: Option<String>,
+) -> Result<String, String> {
+    let text = transcribe_audio(provider, api_key, audio_bytes, vocabulary_prompt).await?;
     paste_text(&text)?;
     Ok(text)
 }
@@ -1159,6 +1168,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            transcribe_audio,
             transcribe_and_paste,
             rewrite_text,
             paste_transcript,
