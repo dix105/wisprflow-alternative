@@ -85,6 +85,8 @@ let waveformFrame = 0;
 let waveformData: Uint8Array<ArrayBuffer> | null = null;
 let waveformLastLogAt = 0;
 let waveformPeakLevel = 0;
+let polishInFlight = false;
+let pasteRewriteInFlight = false;
 let warmMicStream: MediaStream | null = null;
 let warmMicPromise: Promise<MediaStream> | null = null;
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -561,17 +563,29 @@ copyRewriteButton.addEventListener('click', async () => {
 });
 
 pasteRewriteButton.addEventListener('click', async () => {
-  const text = getRewriteText();
-  if (!text) return;
-
-  if (!isTauriRuntime) {
-    await navigator.clipboard.writeText(text);
-    setStatus('idle', 'Preview mode: copied rewritten text instead of pasting.');
+  if (pasteRewriteInFlight) {
+    addDebugEvent('paste_rewrite_ignored_already_in_flight');
     return;
   }
 
-  await invoke('paste_transcript', { text });
-  setStatus('success', 'Rewritten text pasted into the focused app.');
+  const text = getRewriteText();
+  if (!text) return;
+
+  pasteRewriteInFlight = true;
+  pasteRewriteButton.disabled = true;
+  try {
+    if (!isTauriRuntime) {
+      await navigator.clipboard.writeText(text);
+      setStatus('idle', 'Preview mode: copied rewritten text instead of pasting.');
+      return;
+    }
+
+    await invoke('paste_transcript', { text });
+    setStatus('success', 'Rewritten text pasted into the focused app.');
+  } finally {
+    pasteRewriteInFlight = false;
+    pasteRewriteButton.disabled = false;
+  }
 });
 
 function setView(view: ViewName) {
@@ -1003,19 +1017,25 @@ async function installPolishShortcut(next: string) {
 }
 
 async function polishSelectedText() {
+  if (polishInFlight) {
+    addDebugEvent('polish_selected_text_ignored_already_in_flight');
+    return;
+  }
+
   syncApiKey();
   if (!apiKeyInput.value.trim()) {
     setStatus('error', 'Add your Groq API key first.');
     return;
   }
 
+  polishInFlight = true;
   try {
-      setStatus('working', 'Polishing selected text…');
+    setStatus('working', 'Polishing selected text…');
     const text = isTauriRuntime
       ? await invoke<string>('copy_selected_text')
       : rewriteInput.value.trim();
     if (!text.trim()) {
-            setStatus('error', 'Select text first, then press the polish shortcut.');
+      setStatus('error', 'Select text first, then press the polish shortcut.');
       return;
     }
     const polished = await invoke<string>('rewrite_text', {
@@ -1025,9 +1045,11 @@ async function polishSelectedText() {
     });
     if (isTauriRuntime) await invoke('paste_transcript', { text: polished });
     else rewriteOutput.textContent = polished;
-          setStatus('success', 'Selected text polished and pasted.');
+    setStatus('success', 'Selected text polished and pasted.');
   } catch (error) {
-        setStatus('error', String(error));
+    setStatus('error', String(error));
+  } finally {
+    polishInFlight = false;
   }
 }
 
