@@ -1,6 +1,12 @@
 use arboard::Clipboard;
 #[cfg(windows)]
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, SampleFormat};
+#[cfg(windows)]
+use oww_rs::{
+    config::SpeechUnlockType::OpenWakeWordAlexa,
+    mic::{converters::i16_to_f32, mic_config::find_best_config, process_audio::resample_into_chunks, resampler::{make_resampler, Resamplers}},
+    oww::{OwwModel, OWW_MODEL_CHUNK_SIZE},
+};
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
@@ -51,6 +57,8 @@ static HOOK_STATE: OnceLock<Mutex<PushToTalkHookState>> = OnceLock::new();
 
 #[cfg(windows)]
 static NATIVE_RECORDER: OnceLock<Mutex<Option<NativeRecordingState>>> = OnceLock::new();
+#[cfg(windows)]
+static WAKE_WORD_LISTENER: OnceLock<Mutex<Option<WakeWordListenerState>>> = OnceLock::new();
 
 #[cfg(windows)]
 struct NativeRecordingState {
@@ -59,6 +67,12 @@ struct NativeRecordingState {
     samples: Arc<Mutex<Vec<i16>>>,
     sample_rate: u32,
     channels: u16,
+}
+
+#[cfg(windows)]
+struct WakeWordListenerState {
+    stop_tx: mpsc::Sender<()>,
+    done_rx: mpsc::Receiver<()>,
 }
 
 #[cfg(windows)]
@@ -278,6 +292,154 @@ fn stop_native_recording() -> Result<Vec<u8>, String> {
         return Err("Native recording captured no audio".into());
     }
     Ok(wav_pcm16_bytes(&samples, state.sample_rate, state.channels))
+    }
+}
+
+#[tauri::command]
+fn start_wake_word_listener(_app: tauri::AppHandle, _threshold: Option<f32>) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        return Err("Local wake-word detection is only available on Windows right now".into());
+    }
+
+    #[cfg(windows)]
+    {
+    let app = _app;
+    let threshold = _threshold;
+    let listener = WAKE_WORD_LISTENER.get_or_init(|| Mutex::new(None));
+    let mut guard = listener.lock().map_err(|_| "Wake-word listener lock failed".to_string())?;
+    if guard.is_some() {
+        return Ok(());
+    }
+
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let threshold = threshold.unwrap_or(0.3).clamp(0.05, 0.95);
+
+    thread::spawn(move || {
+        let result = run_wake_word_listener(app, threshold, stop_rx, ready_tx);
+        if let Err(error) = result {
+            eprintln!("wake-word listener stopped with error: {error}");
+        }
+        let _ = done_tx.send(());
+    });
+
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "Wake-word listener did not start in time".to_string())??;
+
+    *guard = Some(WakeWordListenerState { stop_tx, done_rx });
+    Ok(())
+    }
+}
+
+#[tauri::command]
+fn stop_wake_word_listener() -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+    let listener = WAKE_WORD_LISTENER.get_or_init(|| Mutex::new(None));
+    let state = listener.lock().map_err(|_| "Wake-word listener lock failed".to_string())?.take();
+    if let Some(state) = state {
+        let _ = state.stop_tx.send(());
+        let _ = state.done_rx.recv_timeout(Duration::from_secs(2));
+    }
+    Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn run_wake_word_listener(
+    app: tauri::AppHandle,
+    threshold: f32,
+    stop_rx: mpsc::Receiver<()>,
+    ready_tx: mpsc::Sender<Result<(), String>>,
+) -> Result<(), String> {
+    let host = cpal::default_host();
+    let device = host.default_input_device().ok_or_else(|| "No default input microphone found".to_string())?;
+    let (config, sample_format) = find_best_config(&device).map_err(|e| format!("Could not find wake-word mic config: {e}"))?;
+    let original_sample_rate = config.sample_rate.0 as f32;
+    let channels = config.channels as usize;
+    let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![]));
+    let err_fn = |err| eprintln!("wake-word mic stream error: {err}");
+
+    let stream = match sample_format {
+        SampleFormat::F32 => {
+            let app = app.clone();
+            let buffer = buffer.clone();
+            let mut model = OwwModel::new(OpenWakeWordAlexa, threshold).map_err(|e| format!("Wake-word model failed: {e}"))?;
+            let mut resampler = make_resampler(original_sample_rate as _, OWW_MODEL_CHUNK_SIZE as _, channels)
+                .map_err(|e| format!("Wake-word resampler failed: {e}"))?;
+            device.build_input_stream(
+                &config,
+                move |data: &[f32], _| detect_wake_word_chunks(data, &buffer, channels, &mut resampler, &mut model, &app),
+                err_fn,
+                None,
+            )
+        }
+        SampleFormat::I16 => {
+            let app = app.clone();
+            let buffer = buffer.clone();
+            let mut model = OwwModel::new(OpenWakeWordAlexa, threshold).map_err(|e| format!("Wake-word model failed: {e}"))?;
+            let mut resampler = make_resampler(original_sample_rate as _, OWW_MODEL_CHUNK_SIZE as _, channels)
+                .map_err(|e| format!("Wake-word resampler failed: {e}"))?;
+            device.build_input_stream(
+                &config,
+                move |data: &[i16], _| {
+                    let samples: Vec<f32> = data.iter().map(i16_to_f32).collect();
+                    detect_wake_word_chunks(&samples, &buffer, channels, &mut resampler, &mut model, &app);
+                },
+                err_fn,
+                None,
+            )
+        }
+        SampleFormat::U16 => {
+            let app = app.clone();
+            let buffer = buffer.clone();
+            let mut model = OwwModel::new(OpenWakeWordAlexa, threshold).map_err(|e| format!("Wake-word model failed: {e}"))?;
+            let mut resampler = make_resampler(original_sample_rate as _, OWW_MODEL_CHUNK_SIZE as _, channels)
+                .map_err(|e| format!("Wake-word resampler failed: {e}"))?;
+            device.build_input_stream(
+                &config,
+                move |data: &[u16], _| {
+                    let samples: Vec<f32> = data.iter().map(|sample| (*sample as f32 - 32768.0) / 32768.0).collect();
+                    detect_wake_word_chunks(&samples, &buffer, channels, &mut resampler, &mut model, &app);
+                },
+                err_fn,
+                None,
+            )
+        }
+        other => return Err(format!("Unsupported wake-word mic sample format: {other:?}")),
+    }
+    .map_err(|e| format!("Could not open wake-word mic stream: {e}"))?;
+
+    stream.play().map_err(|e| format!("Could not start wake-word mic stream: {e}"))?;
+    let _ = ready_tx.send(Ok(()));
+    let _ = stop_rx.recv();
+    drop(stream);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn detect_wake_word_chunks(
+    samples: &[f32],
+    buffer: &Arc<Mutex<Vec<f32>>>,
+    channels: usize,
+    resampler: &mut Resamplers,
+    model: &mut OwwModel,
+    app: &tauri::AppHandle,
+) {
+    let chunks = resample_into_chunks(samples, buffer, channels, resampler);
+    for chunk in chunks {
+        let detection = model.detection(chunk.data_f32.first().clone());
+        if detection.detected {
+            let _ = app.emit("wake-word-detected", detection.probability);
+        }
     }
 }
 
@@ -1179,6 +1341,8 @@ pub fn run() {
             get_transcripts_path,
             install_push_to_talk_hook,
             is_push_to_talk_pressed,
+            start_wake_word_listener,
+            stop_wake_word_listener,
             start_native_recording,
             stop_native_recording,
             start_audio_ducking,
