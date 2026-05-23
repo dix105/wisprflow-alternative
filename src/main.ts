@@ -17,6 +17,8 @@ const TOTAL_WORDS_KEY = 'flowDeskTotalWordsSpoken';
 const MEDIA_PAUSE_KEY = 'flowDeskPauseBackgroundMedia';
 const RECORDING_MODE_KEY = 'flowDeskRecordingMode';
 const AUDIO_DUCKING_VOLUME_KEY = 'flowDeskAudioDuckingVolume';
+const RECORDING_BEEP_VOLUME_KEY = 'flowDeskRecordingBeepVolume';
+const RECORDING_BEEP_STYLE_KEY = 'flowDeskRecordingBeepStyle';
 const FAST_MIC_KEY = 'flowDeskFastMic';
 const NATIVE_MIC_KEY = 'flowDeskNativeMic';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
@@ -39,6 +41,7 @@ type RewriteMode = 'clean' | 'polish' | 'professional' | 'shorter' | 'friendly';
 type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam' | 'deepgram';
 type RecordingMode = 'hold' | 'toggle';
 type VoiceTriggerEngine = 'openwakeword' | 'windows';
+type RecordingBeepStyle = 'chime' | 'classic' | 'digital' | 'soft';
 
 type HistoryItem = {
   id: string;
@@ -82,6 +85,10 @@ let recordingMode = (localStorage.getItem(RECORDING_MODE_KEY) as RecordingMode) 
 let audioDuckingVolume = Number(localStorage.getItem(AUDIO_DUCKING_VOLUME_KEY) || '35');
 if (!Number.isFinite(audioDuckingVolume)) audioDuckingVolume = 35;
 audioDuckingVolume = Math.min(100, Math.max(0, audioDuckingVolume));
+let recordingBeepVolume = Number(localStorage.getItem(RECORDING_BEEP_VOLUME_KEY) || '55');
+if (!Number.isFinite(recordingBeepVolume)) recordingBeepVolume = 55;
+recordingBeepVolume = Math.min(100, Math.max(0, recordingBeepVolume));
+let recordingBeepStyle = (localStorage.getItem(RECORDING_BEEP_STYLE_KEY) as RecordingBeepStyle) || 'chime';
 let deepgramStreamingEnabled = localStorage.getItem(DEEPGRAM_STREAMING_KEY) === 'true';
 let streamingSocket: WebSocket | null = null;
 let streamingTranscript = '';
@@ -247,7 +254,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" data-settings-tab="general" type="button">☷ General</button><button data-settings-tab="voice" type="button">◉ Voice trigger</button><button data-settings-tab="audio" type="button">▭ Audio</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Beep sound</strong><span>Pick the recording start/stop sound style.</span></div><select id="recordingBeepStyle"><option value="chime">Chime — bright</option><option value="classic">Classic — recorder beep</option><option value="digital">Digital — crisp</option><option value="soft">Soft — gentle</option></select></label><label class="settings-row"><div><strong>Beep volume</strong><span>Recording start/stop sound volume.</span></div><input id="recordingBeepVolume" type="range" min="0" max="100" step="5" /><span id="recordingBeepVolumeValue">55%</span></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test beep</strong><span>Play the selected start and stop beep.</span></div><button id="testRecordingBeep" class="soft-btn" type="button">Play beep</button></div><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
       </section>
     </aside>
 
@@ -295,9 +302,13 @@ const voiceTriggerEngineInput = document.querySelector<HTMLSelectElement>('#voic
 const voiceTriggerPhraseInput = document.querySelector<HTMLInputElement>('#voiceTriggerPhrase')!;
 const voiceStopPhraseInput = document.querySelector<HTMLInputElement>('#voiceStopPhrase')!;
 const recordingModeInput = document.querySelector<HTMLSelectElement>('#recordingMode')!;
+const recordingBeepStyleInput = document.querySelector<HTMLSelectElement>('#recordingBeepStyle')!;
+const recordingBeepVolumeInput = document.querySelector<HTMLInputElement>('#recordingBeepVolume')!;
+const recordingBeepVolumeValue = document.querySelector<HTMLElement>('#recordingBeepVolumeValue')!;
 const audioDuckingVolumeInput = document.querySelector<HTMLInputElement>('#audioDuckingVolume')!;
 const audioDuckingVolumeValue = document.querySelector<HTMLElement>('#audioDuckingVolumeValue')!;
 const testAudioDuckingButton = document.querySelector<HTMLButtonElement>('#testAudioDucking')!;
+const testRecordingBeepButton = document.querySelector<HTMLButtonElement>('#testRecordingBeep')!;
 const statusBox = document.querySelector<HTMLElement>('#status')!;
 const totalWordsSpokenEl = document.querySelector<HTMLElement>('#totalWordsSpoken')!;
 const averageWordsPerMinuteEl = document.querySelector<HTMLElement>('#averageWordsPerMinute')!;
@@ -339,6 +350,9 @@ voiceTriggerEngineInput.value = voiceTriggerEngine;
 voiceTriggerPhraseInput.value = voiceTriggerPhrase;
 voiceStopPhraseInput.value = voiceStopPhrase;
 recordingModeInput.value = recordingMode;
+recordingBeepStyleInput.value = recordingBeepStyle;
+recordingBeepVolumeInput.value = String(recordingBeepVolume);
+recordingBeepVolumeValue.textContent = `${recordingBeepVolume}%`;
 audioDuckingVolumeInput.value = String(audioDuckingVolume);
 audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
 hydrateRewriteFromHistory();
@@ -457,6 +471,11 @@ drawerBackdrop.addEventListener('click', closeSettings);
 openRewriteButton?.addEventListener('click', () => setView('transforms'));
 startFromScratchpadButton.addEventListener('click', () => toggleRecording());
 testAudioDuckingButton.addEventListener('click', () => testAudioDucking());
+testRecordingBeepButton.addEventListener('click', async () => {
+  await playRecordingStartBeep();
+  await sleep(120);
+  await playRecordingStopBeep();
+});
 
 document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach((button) => {
   button.addEventListener('click', () => setSettingsPanel(button.dataset.settingsTab || 'general'));
@@ -633,6 +652,18 @@ audioDuckingVolumeInput.addEventListener('input', () => {
   audioDuckingVolume = Number(audioDuckingVolumeInput.value);
   localStorage.setItem(AUDIO_DUCKING_VOLUME_KEY, String(audioDuckingVolume));
   audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
+});
+
+recordingBeepVolumeInput.addEventListener('input', () => {
+  recordingBeepVolume = Number(recordingBeepVolumeInput.value);
+  localStorage.setItem(RECORDING_BEEP_VOLUME_KEY, String(recordingBeepVolume));
+  recordingBeepVolumeValue.textContent = `${recordingBeepVolume}%`;
+});
+
+recordingBeepStyleInput.addEventListener('change', () => {
+  recordingBeepStyle = recordingBeepStyleInput.value as RecordingBeepStyle;
+  localStorage.setItem(RECORDING_BEEP_STYLE_KEY, recordingBeepStyle);
+  setStatus('success', `Beep sound changed to ${recordingBeepStyle}.`);
 });
 
 autostartInput.addEventListener('change', async () => {
@@ -1874,18 +1905,35 @@ async function pasteTextToFocusedApp(text: string) {
 }
 
 async function playRecordingStartBeep() {
-  await playBeepSequence([
-    { frequency: 660, durationMs: 70, gain: 0.055 },
-    { frequency: 880, durationMs: 90, gain: 0.06 },
-  ]);
+  await playBeepSequence(beepNotes(recordingBeepStyle, 'start'));
   await sleep(RECORDING_START_BEEP_MS);
 }
 
 async function playRecordingStopBeep() {
-  await playBeepSequence([
-    { frequency: 880, durationMs: 65, gain: 0.05 },
-    { frequency: 520, durationMs: 120, gain: 0.055 },
-  ]);
+  await playBeepSequence(beepNotes(recordingBeepStyle, 'stop'));
+}
+
+function beepNotes(style: RecordingBeepStyle, phase: 'start' | 'stop') {
+  const gain = Math.pow(recordingBeepVolume / 100, 1.35) * 0.24;
+  const library: Record<RecordingBeepStyle, { start: Array<{ frequency: number; durationMs: number; gain: number }>; stop: Array<{ frequency: number; durationMs: number; gain: number }> }> = {
+    chime: {
+      start: [{ frequency: 740, durationMs: 95, gain }, { frequency: 1040, durationMs: 120, gain: gain * 0.9 }],
+      stop: [{ frequency: 980, durationMs: 80, gain: gain * 0.85 }, { frequency: 620, durationMs: 135, gain }],
+    },
+    classic: {
+      start: [{ frequency: 1000, durationMs: 150, gain }],
+      stop: [{ frequency: 620, durationMs: 180, gain }],
+    },
+    digital: {
+      start: [{ frequency: 880, durationMs: 55, gain }, { frequency: 1320, durationMs: 70, gain: gain * 0.85 }],
+      stop: [{ frequency: 1320, durationMs: 45, gain: gain * 0.75 }, { frequency: 760, durationMs: 90, gain }],
+    },
+    soft: {
+      start: [{ frequency: 523, durationMs: 90, gain: gain * 0.65 }, { frequency: 659, durationMs: 110, gain: gain * 0.6 }],
+      stop: [{ frequency: 659, durationMs: 90, gain: gain * 0.55 }, { frequency: 392, durationMs: 130, gain: gain * 0.6 }],
+    },
+  };
+  return library[style]?.[phase] || library.chime[phase];
 }
 
 async function playBeepSequence(notes: Array<{ frequency: number; durationMs: number; gain: number }>) {
