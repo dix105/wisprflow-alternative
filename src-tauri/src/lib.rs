@@ -12,7 +12,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 #[cfg(windows)]
-use std::{collections::HashSet, sync::atomic::{AtomicBool, Ordering}};
+use std::{
+    collections::HashSet,
+    io::{BufRead, BufReader},
+    process::{Child, Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
+};
 use std::{fs, path::PathBuf, thread, time::Duration};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -59,6 +64,8 @@ static HOOK_STATE: OnceLock<Mutex<PushToTalkHookState>> = OnceLock::new();
 static NATIVE_RECORDER: OnceLock<Mutex<Option<NativeRecordingState>>> = OnceLock::new();
 #[cfg(windows)]
 static WAKE_WORD_LISTENER: OnceLock<Mutex<Option<WakeWordListenerState>>> = OnceLock::new();
+#[cfg(windows)]
+static WINDOWS_SPEECH_LISTENER: OnceLock<Mutex<Option<WindowsSpeechListenerState>>> = OnceLock::new();
 
 #[cfg(windows)]
 struct NativeRecordingState {
@@ -73,6 +80,11 @@ struct NativeRecordingState {
 struct WakeWordListenerState {
     stop_tx: mpsc::Sender<()>,
     done_rx: mpsc::Receiver<()>,
+}
+
+#[cfg(windows)]
+struct WindowsSpeechListenerState {
+    child: Child,
 }
 
 #[cfg(windows)]
@@ -348,6 +360,103 @@ fn stop_wake_word_listener() -> Result<(), String> {
     if let Some(state) = state {
         let _ = state.stop_tx.send(());
         let _ = state.done_rx.recv_timeout(Duration::from_secs(2));
+    }
+    Ok(())
+    }
+}
+
+#[tauri::command]
+fn start_windows_speech_listener(_app: tauri::AppHandle, _phrase: String) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        return Err("Windows custom voice triggers are only available on Windows".into());
+    }
+
+    #[cfg(windows)]
+    {
+    let app = _app;
+    let phrase = _phrase.trim().to_string();
+    if phrase.is_empty() {
+        return Err("Trigger phrase cannot be empty".into());
+    }
+
+    stop_windows_speech_listener()?;
+
+    let listener = WINDOWS_SPEECH_LISTENER.get_or_init(|| Mutex::new(None));
+    let mut guard = listener.lock().map_err(|_| "Windows speech listener lock failed".to_string())?;
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Speech
+$phrase = $env:FLOWDESK_TRIGGER_PHRASE
+$recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine ([System.Globalization.CultureInfo]::CurrentCulture)
+$choices = New-Object System.Speech.Recognition.Choices
+[void]$choices.Add($phrase)
+$grammarBuilder = New-Object System.Speech.Recognition.GrammarBuilder
+$grammarBuilder.Culture = $recognizer.RecognizerInfo.Culture
+[void]$grammarBuilder.Append($choices)
+$grammar = New-Object System.Speech.Recognition.Grammar($grammarBuilder)
+$recognizer.LoadGrammar($grammar)
+$recognizer.SetInputToDefaultAudioDevice()
+Register-ObjectEvent -InputObject $recognizer -EventName SpeechRecognized -Action {
+  if ($EventArgs.Result.Confidence -ge 0.55) {
+    [Console]::Out.WriteLine(('FLOWDESK_WAKE:' + $EventArgs.Result.Confidence))
+    [Console]::Out.Flush()
+  }
+} | Out-Null
+$recognizer.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple)
+while ($true) { Start-Sleep -Milliseconds 250 }
+"#;
+
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .env("FLOWDESK_TRIGGER_PHRASE", &phrase)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start Windows speech listener: {e}"))?;
+
+    if let Some(stdout) = child.stdout.take() {
+        let app = app.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                if let Some(confidence) = line.strip_prefix("FLOWDESK_WAKE:") {
+                    let score = confidence.trim().parse::<f32>().unwrap_or(0.0);
+                    let _ = app.emit("wake-word-detected", score);
+                }
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                eprintln!("windows speech listener: {line}");
+            }
+        });
+    }
+
+    *guard = Some(WindowsSpeechListenerState { child });
+    Ok(())
+    }
+}
+
+#[tauri::command]
+fn stop_windows_speech_listener() -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+    let listener = WINDOWS_SPEECH_LISTENER.get_or_init(|| Mutex::new(None));
+    let mut guard = listener.lock().map_err(|_| "Windows speech listener lock failed".to_string())?;
+    if let Some(mut state) = guard.take() {
+        let _ = state.child.kill();
+        let _ = state.child.wait();
     }
     Ok(())
     }
@@ -1343,6 +1452,8 @@ pub fn run() {
             is_push_to_talk_pressed,
             start_wake_word_listener,
             stop_wake_word_listener,
+            start_windows_speech_listener,
+            stop_windows_speech_listener,
             start_native_recording,
             stop_native_recording,
             start_audio_ducking,
