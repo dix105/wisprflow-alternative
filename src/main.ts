@@ -1470,14 +1470,20 @@ async function finishNativeRecording(reason: string) {
         vocabularyPrompt: buildVocabularyPrompt(),
       });
     addDebugEvent('native_transcription_result', { text, length: text.length });
-    const finalText = await polishDictationIfEnabled(text);
+    const cleanedText = cleanControlPhrasesBeforePolish(text);
+    if (!cleanedText) {
+      setStatus('idle', 'Ignored wake/stop phrase only — nothing to paste.');
+      return;
+    }
+    if (cleanedText !== text) addDebugEvent('native_control_phrase_text_removed', { before: text, after: cleanedText });
+    const finalText = await polishDictationIfEnabled(cleanedText);
     if (autoPolishEnabled) {
-      addDebugEvent('native_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== text });
+      addDebugEvent('native_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== cleanedText });
       await pasteTextToFocusedApp(finalText);
     }
     const stats = addHistory(finalText, durationMs);
     rewriteInput.value = finalText;
-          setStatus('success', `${finalText !== text ? 'Native mic polished and pasted' : 'Native mic pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+          setStatus('success', `${finalText !== cleanedText ? 'Native mic polished and pasted' : 'Native mic pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
   } finally {
     recordingStartedAt = 0;
     recordingFinishing = false;
@@ -1675,17 +1681,23 @@ async function transcribeStreamingResult() {
     addDebugEvent('streaming_transcription_finish_result', { text, length: text.length, socketFailed: streamingSocketFailed });
 
     if (text) {
-      const finalText = await polishDictationIfEnabled(text);
-      if (finalText !== text) addDebugEvent('streaming_auto_polish_result', { text: finalText, length: finalText.length });
+      const cleanedText = cleanControlPhrasesBeforePolish(text);
+      if (!cleanedText) {
+        setStatus('idle', 'Ignored wake/stop phrase only — nothing to paste.');
+        return;
+      }
+      if (cleanedText !== text) addDebugEvent('streaming_control_phrase_text_removed', { before: text, after: cleanedText });
+      const finalText = await polishDictationIfEnabled(cleanedText);
+      if (finalText !== cleanedText) addDebugEvent('streaming_auto_polish_result', { text: finalText, length: finalText.length });
       if (isTauriRuntime && !streamingPastedLive) {
         await pasteTextToFocusedApp(finalText);
-        addDebugEvent('streaming_final_paste_full_text', { length: finalText.length, polished: finalText !== text });
+        addDebugEvent('streaming_final_paste_full_text', { length: finalText.length, polished: finalText !== cleanedText });
       } else if (streamingPastedLive) {
         addDebugEvent('streaming_final_paste_skipped_already_live', { length: text.length });
       }
       const stats = addHistory(finalText, durationMs);
       rewriteInput.value = finalText;
-                setStatus('success', `${finalText !== text ? 'Streamed, polished, and pasted' : 'Streamed and pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+                setStatus('success', `${finalText !== cleanedText ? 'Streamed, polished, and pasted' : 'Streamed and pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
     } else {
       const reason = streamingSocketFailed ? 'Live stream connection failed' : 'Live stream returned no text';
       setStatus('working', `${reason} — retrying with normal transcription…`);
@@ -1740,15 +1752,21 @@ async function transcribeAndPaste() {
       });
     addDebugEvent('normal_transcription_result', { text, length: text.length });
 
-    const finalText = await polishDictationIfEnabled(text);
+    const cleanedText = cleanControlPhrasesBeforePolish(text);
+    if (!cleanedText) {
+      setStatus('idle', 'Ignored wake/stop phrase only — nothing to paste.');
+      return;
+    }
+    if (cleanedText !== text) addDebugEvent('normal_control_phrase_text_removed', { before: text, after: cleanedText });
+    const finalText = await polishDictationIfEnabled(cleanedText);
     if (autoPolishEnabled) {
-      addDebugEvent('normal_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== text });
+      addDebugEvent('normal_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== cleanedText });
       await pasteTextToFocusedApp(finalText);
     }
 
     const stats = addHistory(finalText, durationMs);
     rewriteInput.value = finalText;
-          setStatus('success', `${finalText !== text ? 'Polished and pasted' : 'Pasted and saved to history'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
+          setStatus('success', `${finalText !== cleanedText ? 'Polished and pasted' : 'Pasted and saved to history'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
   } catch (error) {
     addDebugEvent('normal_transcription_error', String(error));
         setStatus('error', String(error));
@@ -1781,6 +1799,50 @@ async function polishDictationIfEnabled(text: string) {
     mode: 'polish',
   });
   return polished.trim() || text;
+}
+
+function cleanControlPhrasesBeforePolish(text: string) {
+  let cleaned = text.trim();
+  const phrases = [
+    'Alexa',
+    voiceTriggerPhrase,
+    voiceStopPhrase,
+    'start typing',
+    'stop typing',
+  ].map((phrase) => phrase.trim()).filter(Boolean);
+
+  for (const phrase of Array.from(new Set(phrases))) {
+    cleaned = stripControlPhraseFromEdges(cleaned, phrase);
+  }
+
+  return normalizeTranscriptText(cleaned);
+}
+
+function stripControlPhraseFromEdges(text: string, phrase: string) {
+  const escapedPhrase = escapeRegExp(phrase).replace(/\s+/g, '\\s+');
+  const leadingPattern = new RegExp(`^\\s*(?:${escapedPhrase})[\\s,.:;!?-]*`, 'i');
+  const trailingPattern = new RegExp(`[\\s,.:;!?-]*(?:${escapedPhrase})[\\s,.:;!?-]*$`, 'i');
+  let cleaned = text;
+  let previous = '';
+
+  while (previous !== cleaned) {
+    previous = cleaned;
+    cleaned = cleaned.replace(leadingPattern, '').replace(trailingPattern, '');
+  }
+
+  return cleaned;
+}
+
+function normalizeTranscriptText(text: string) {
+  return text
+    .replace(/\s+([,.:;!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s,.:;!?-]+|[\s,.:;!?-]+$/g, '')
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function chunksForTranscription() {
