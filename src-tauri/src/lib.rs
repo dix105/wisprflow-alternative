@@ -366,7 +366,7 @@ fn stop_wake_word_listener() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn start_windows_speech_listener(_app: tauri::AppHandle, _phrase: String) -> Result<(), String> {
+fn start_windows_speech_listener(_app: tauri::AppHandle, _phrase: String, _stop_phrase: Option<String>) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         return Err("Windows custom voice triggers are only available on Windows".into());
@@ -376,8 +376,12 @@ fn start_windows_speech_listener(_app: tauri::AppHandle, _phrase: String) -> Res
     {
     let app = _app;
     let phrase = _phrase.trim().to_string();
+    let stop_phrase = _stop_phrase.unwrap_or_else(|| "stop typing".to_string()).trim().to_string();
     if phrase.is_empty() {
         return Err("Trigger phrase cannot be empty".into());
+    }
+    if stop_phrase.is_empty() {
+        return Err("Stop phrase cannot be empty".into());
     }
 
     stop_windows_speech_listener()?;
@@ -388,9 +392,11 @@ fn start_windows_speech_listener(_app: tauri::AppHandle, _phrase: String) -> Res
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Speech
 $phrase = $env:FLOWDESK_TRIGGER_PHRASE
+$stopPhrase = $env:FLOWDESK_STOP_PHRASE
 $recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine ([System.Globalization.CultureInfo]::CurrentCulture)
 $choices = New-Object System.Speech.Recognition.Choices
 [void]$choices.Add($phrase)
+[void]$choices.Add($stopPhrase)
 $grammarBuilder = New-Object System.Speech.Recognition.GrammarBuilder
 $grammarBuilder.Culture = $recognizer.RecognizerInfo.Culture
 [void]$grammarBuilder.Append($choices)
@@ -399,7 +405,12 @@ $recognizer.LoadGrammar($grammar)
 $recognizer.SetInputToDefaultAudioDevice()
 Register-ObjectEvent -InputObject $recognizer -EventName SpeechRecognized -Action {
   if ($EventArgs.Result.Confidence -ge 0.55) {
-    [Console]::Out.WriteLine(('FLOWDESK_WAKE:' + $EventArgs.Result.Confidence))
+    $recognized = $EventArgs.Result.Text
+    if ($recognized -ieq $env:FLOWDESK_STOP_PHRASE) {
+      [Console]::Out.WriteLine(('FLOWDESK_STOP:' + $EventArgs.Result.Confidence))
+    } else {
+      [Console]::Out.WriteLine(('FLOWDESK_WAKE:' + $EventArgs.Result.Confidence))
+    }
     [Console]::Out.Flush()
   }
 } | Out-Null
@@ -410,6 +421,7 @@ while ($true) { Start-Sleep -Milliseconds 250 }
     let mut child = Command::new("powershell.exe")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
         .env("FLOWDESK_TRIGGER_PHRASE", &phrase)
+        .env("FLOWDESK_STOP_PHRASE", &stop_phrase)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -424,6 +436,9 @@ while ($true) { Start-Sleep -Milliseconds 250 }
                 if let Some(confidence) = line.strip_prefix("FLOWDESK_WAKE:") {
                     let score = confidence.trim().parse::<f32>().unwrap_or(0.0);
                     let _ = app.emit("wake-word-detected", score);
+                } else if let Some(confidence) = line.strip_prefix("FLOWDESK_STOP:") {
+                    let score = confidence.trim().parse::<f32>().unwrap_or(0.0);
+                    let _ = app.emit("voice-stop-detected", score);
                 }
             }
         });

@@ -23,6 +23,7 @@ const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const AUTO_POLISH_KEY = 'flowDeskAutoPolish';
 const VOICE_TRIGGER_KEY = 'flowDeskVoiceTrigger';
 const VOICE_TRIGGER_PHRASE_KEY = 'flowDeskVoiceTriggerPhrase';
+const VOICE_STOP_PHRASE_KEY = 'flowDeskVoiceStopPhrase';
 const VOICE_TRIGGER_ENGINE_KEY = 'flowDeskVoiceTriggerEngine';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
 const AUDIO_RESTORE_DELAY_MS = 150;
@@ -70,6 +71,7 @@ let autoPolishEnabled = localStorage.getItem(AUTO_POLISH_KEY) === 'true';
 let voiceTriggerEnabled = localStorage.getItem(VOICE_TRIGGER_KEY) === 'true';
 let voiceTriggerEngine = (localStorage.getItem(VOICE_TRIGGER_ENGINE_KEY) as VoiceTriggerEngine) || 'openwakeword';
 let voiceTriggerPhrase = localStorage.getItem(VOICE_TRIGGER_PHRASE_KEY) || 'start typing';
+let voiceStopPhrase = localStorage.getItem(VOICE_STOP_PHRASE_KEY) || 'stop typing';
 let recordingMode = (localStorage.getItem(RECORDING_MODE_KEY) as RecordingMode) || 'hold';
 let audioDuckingVolume = Number(localStorage.getItem(AUDIO_DUCKING_VOLUME_KEY) || '35');
 if (!Number.isFinite(audioDuckingVolume)) audioDuckingVolume = 35;
@@ -238,7 +240,7 @@ app.innerHTML = `
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" data-settings-tab="general" type="button">☷ General</button><button data-settings-tab="voice" type="button">◉ Voice trigger</button><button data-settings-tab="audio" type="button">▭ Audio</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
       </section>
     </aside>
 
@@ -284,6 +286,7 @@ const nativeMicInput = document.querySelector<HTMLInputElement>('#nativeMic')!;
 const voiceTriggerInput = document.querySelector<HTMLInputElement>('#voiceTrigger')!;
 const voiceTriggerEngineInput = document.querySelector<HTMLSelectElement>('#voiceTriggerEngine')!;
 const voiceTriggerPhraseInput = document.querySelector<HTMLInputElement>('#voiceTriggerPhrase')!;
+const voiceStopPhraseInput = document.querySelector<HTMLInputElement>('#voiceStopPhrase')!;
 const recordingModeInput = document.querySelector<HTMLSelectElement>('#recordingMode')!;
 const audioDuckingVolumeInput = document.querySelector<HTMLInputElement>('#audioDuckingVolume')!;
 const audioDuckingVolumeValue = document.querySelector<HTMLElement>('#audioDuckingVolumeValue')!;
@@ -327,6 +330,7 @@ nativeMicInput.checked = nativeMicEnabled;
 voiceTriggerInput.checked = voiceTriggerEnabled;
 voiceTriggerEngineInput.value = voiceTriggerEngine;
 voiceTriggerPhraseInput.value = voiceTriggerPhrase;
+voiceStopPhraseInput.value = voiceStopPhrase;
 recordingModeInput.value = recordingMode;
 audioDuckingVolumeInput.value = String(audioDuckingVolume);
 audioDuckingVolumeValue.textContent = `${audioDuckingVolume}%`;
@@ -593,6 +597,22 @@ voiceTriggerPhraseInput.addEventListener('change', () => {
     }
   } else {
     setStatus('idle', 'Saved text, but OpenWakeWord still detects “Alexa”. Choose Windows Speech for custom words.');
+  }
+});
+
+voiceStopPhraseInput.addEventListener('change', () => {
+  voiceStopPhrase = voiceStopPhraseInput.value.trim() || 'stop typing';
+  voiceStopPhraseInput.value = voiceStopPhrase;
+  localStorage.setItem(VOICE_STOP_PHRASE_KEY, voiceStopPhrase);
+  if (voiceTriggerEngine === 'windows') {
+    setStatus('success', `Windows stop phrase saved: “${voiceStopPhrase}”.`);
+    if (voiceTriggerEnabled) {
+      stopVoiceTrigger()
+        .then(() => startVoiceTrigger())
+        .catch((error) => setStatus('error', `Voice trigger restart failed: ${String(error)}`));
+    }
+  } else {
+    setStatus('idle', 'Saved text, but spoken stop only works with Windows Speech for now.');
   }
 });
 
@@ -1159,6 +1179,10 @@ async function setupPushToTalkListeners() {
     addDebugEvent('wake_word_detected', { probability: event.payload });
     startRecordingFromVoiceTrigger();
   });
+  await listen('voice-stop-detected', (event) => {
+    addDebugEvent('voice_stop_detected', { probability: event.payload });
+    stopRecordingFromVoiceTrigger();
+  });
   await listen('push-to-talk-down', () => {
     addDebugEvent('push_to_talk_down_event');
     startRecordingFromPushToTalk();
@@ -1178,8 +1202,8 @@ async function startVoiceTrigger() {
   await setupPushToTalkListeners();
   await stopVoiceTrigger();
   if (voiceTriggerEngine === 'windows') {
-    await invoke('start_windows_speech_listener', { phrase: voiceTriggerPhrase });
-    addDebugEvent('voice_trigger_started', { wakeWord: voiceTriggerPhrase, engine: 'Windows Speech' });
+    await invoke('start_windows_speech_listener', { phrase: voiceTriggerPhrase, stopPhrase: voiceStopPhrase });
+    addDebugEvent('voice_trigger_started', { wakeWord: voiceTriggerPhrase, stopPhrase: voiceStopPhrase, engine: 'Windows Speech' });
     return;
   }
   await invoke('start_wake_word_listener', { threshold: 0.3 });
@@ -1206,6 +1230,17 @@ function startRecordingFromVoiceTrigger() {
   miniWidgetLabel.textContent = 'Voice trigger active';
   miniWidgetState.textContent = 'Opening mic';
   toggleRecording();
+}
+
+function stopRecordingFromVoiceTrigger() {
+  miniWidget.classList.remove('shortcut-active');
+  if (requestStopRecording('voice_stop_phrase')) return;
+  if (recordingTransitionInFlight) {
+    stopAfterStartRequested = true;
+    addDebugEvent('voice_stop_after_start_requested');
+    return;
+  }
+  addDebugEvent('voice_stop_ignored_not_recording', { recorderState: recorder?.state || null, nativeRecordingActive, finishing: recordingFinishing });
 }
 
 function startRecordingFromPushToTalk() {
