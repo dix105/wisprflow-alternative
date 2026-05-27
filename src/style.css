@@ -188,6 +188,9 @@ kbd { display: inline-flex; min-width: 25px; justify-content: center; margin: 0 
 .dictionary-editor, .transform-card, .list-card, .style-grid article { display: grid; gap: 8px; border: 1px solid #ebe8e0; border-radius: 14px; padding: 18px; background: #fff; }
 .compact-textarea { min-height: 150px; resize: vertical; }
 .dictionary-editor small { color: #6b665e; }
+.dictionary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+.prompt-preview-card { border: 1px solid #ebe8e0; border-radius: 14px; padding: 18px; background: #fbfaf7; }
+.prompt-preview-card pre { margin: 0; min-height: 76px; border: 1px solid #e3dfd6; border-radius: 12px; padding: 12px; background: #191816; color: #f8f4ec; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .list-card { padding: 0; overflow: hidden; }
 .list-card > div { padding: 18px; border-bottom: 1px solid #ebe8e0; }
 .list-card p { margin: 4px 0 0; }
@@ -854,6 +857,7 @@ textarea { line-height: 1.55; }
   .stats-strip,
   .rewrite-layout,
   .style-grid,
+  .dictionary-grid,
   .provider-row { grid-template-columns: 1fr; }
   .drawer-panel { grid-template-columns: 1fr; }
   .settings-sidebar { display: none; }

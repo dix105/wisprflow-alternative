@@ -28,6 +28,7 @@ const VOICE_TRIGGER_PHRASE_KEY = 'flowDeskVoiceTriggerPhrase';
 const VOICE_STOP_PHRASE_KEY = 'flowDeskVoiceStopPhrase';
 const VOICE_TRIGGER_ENGINE_KEY = 'flowDeskVoiceTriggerEngine';
 const DEBUG_EXPECTED_WORDS_KEY = 'flowDeskDebugExpectedWords';
+const TRANSCRIPT_CORRECTIONS_KEY = 'flowDeskTranscriptCorrections';
 const AUDIO_RESTORE_DELAY_MS = 150;
 const RECORDING_TOGGLE_DEBOUNCE_MS = 900;
 const VOICE_TRIGGER_START_DELAY_MS = 450;
@@ -128,6 +129,7 @@ app.innerHTML = `
 
         <nav class="nav-list" aria-label="Primary">
           <button class="nav-item active" data-view="dictation" type="button"><span>⌘</span>Home</button>
+          <button class="nav-item" data-view="dictionary" type="button"><span>Ab</span>Words</button>
           <button class="nav-item" data-view="scratchpad" type="button"><span>▤</span>Scratchpad</button>
           <button class="nav-item" data-view="transforms" type="button"><span>✦</span>Polish text</button>
         </nav>
@@ -222,6 +224,55 @@ app.innerHTML = `
           </article>
         </section>
 
+
+        <section class="view-panel" data-panel="dictionary">
+          <header class="page-head">
+            <div>
+              <h1>Words</h1>
+              <p>Add names, product terms, and regular words FlowDesk should spell exactly the way you expect.</p>
+            </div>
+          </header>
+
+          <article class="dictionary-hero">
+            <div>
+              <span class="console-kicker">Whisper glossary</span>
+              <h2>Teach transcription your vocabulary</h2>
+              <p>These words are included in the Whisper prompt for Groq transcriptions. Corrections run after transcription, before paste, so repeated mistakes can be fixed deterministically.</p>
+              <div id="wordPills" class="word-pills"><span>Dixit</span><span>Ampere</span><span>OpenClaw</span></div>
+            </div>
+          </article>
+
+          <section class="dictionary-grid">
+            <article class="dictionary-editor">
+              <span>Preferred words</span>
+              <textarea id="vocabularyInput" class="compact-textarea" rows="10" placeholder="One per line or comma separated. Example:
+Dixit
+Ampere
+OpenClaw
+MaxStudio
+ChromaStudio
+Remix AI"></textarea>
+              <small>Used to build the Whisper prompt. Best for brand names, people, product names, and domain words.</small>
+            </article>
+            <article class="dictionary-editor">
+              <span>Auto-corrections</span>
+              <textarea id="correctionsInput" class="compact-textarea" rows="10" placeholder="One correction per line. Example:
+whisper flow => WisprFlow
+open claw => OpenClaw
+max studio => MaxStudio"></textarea>
+              <small>Runs after transcription and before paste. Use <strong>heard wrong =&gt; correct spelling</strong>.</small>
+            </article>
+          </section>
+
+          <article class="prompt-preview-card">
+            <div class="provider-card-head">
+              <div><strong>Prompt preview</strong><span>This is what gets attached to Groq Whisper requests.</span></div>
+              <button id="copyPromptPreview" class="soft-btn" type="button">Copy prompt</button>
+            </div>
+            <pre id="promptPreview">No words yet.</pre>
+          </article>
+        </section>
+
         <section class="view-panel" data-panel="snippets">
           <header class="page-head"><div><h1>Snippets</h1><p>Reusable text blocks for replies, prompts, intros, and support answers.</p></div><button class="primary-btn small" type="button">Create snippet</button></header>
           <div class="list-card"><div><strong>Quick intro</strong><p>Hey, here’s the quick context…</p></div><div><strong>Follow-up</strong><p>Checking in on this — should I proceed?</p></div><div><strong>Bug report</strong><p>Expected / Actual / Steps to reproduce…</p></div></div>
@@ -275,6 +326,10 @@ const deepgramApiKeyInput = document.querySelector<HTMLInputElement>('#deepgramA
 const deepgramStreamingInput = document.querySelector<HTMLInputElement>('#deepgramStreaming')!;
 const activeProviderBadge = document.querySelector<HTMLElement>('#activeProviderBadge')!;
 const vocabularyInput = document.querySelector<HTMLTextAreaElement>('#vocabularyInput');
+const correctionsInput = document.querySelector<HTMLTextAreaElement>('#correctionsInput');
+const wordPills = document.querySelector<HTMLElement>('#wordPills');
+const promptPreview = document.querySelector<HTMLElement>('#promptPreview');
+const copyPromptPreviewButton = document.querySelector<HTMLButtonElement>('#copyPromptPreview');
 const saveButton = document.querySelector<HTMLButtonElement>('#save')!;
 const saveMirrorButton = document.querySelector<HTMLButtonElement>('#saveMirror')!;
 const toggleButton = document.querySelector<HTMLButtonElement>('#toggle')!;
@@ -337,6 +392,8 @@ deepgramStreamingInput.checked = deepgramStreamingEnabled;
 debugExpectedWordsInput.value = localStorage.getItem(DEBUG_EXPECTED_WORDS_KEY) || '';
 renderProvider();
 if (vocabularyInput) vocabularyInput.value = localStorage.getItem(VOCABULARY_KEY) || '';
+if (correctionsInput) correctionsInput.value = localStorage.getItem(TRANSCRIPT_CORRECTIONS_KEY) || '';
+renderGlossaryPreview();
 renderShortcut(shortcut);
 renderPolishShortcut(polishShortcut);
 renderHistory();
@@ -400,6 +457,17 @@ copyDebugBundleButton.addEventListener('click', async () => {
 });
 vocabularyInput?.addEventListener('input', () => {
   localStorage.setItem(VOCABULARY_KEY, vocabularyInput.value.trim());
+  renderGlossaryPreview();
+});
+
+correctionsInput?.addEventListener('input', () => {
+  localStorage.setItem(TRANSCRIPT_CORRECTIONS_KEY, correctionsInput.value.trim());
+  renderGlossaryPreview();
+});
+
+copyPromptPreviewButton?.addEventListener('click', async () => {
+  await navigator.clipboard.writeText(buildVocabularyPrompt() || '');
+  setStatus('success', 'Whisper prompt copied.');
 });
 
 function syncApiKey() {
@@ -1493,19 +1561,7 @@ async function finishNativeRecording(reason: string) {
     const durationMs = recordingStartedAt ? Math.max(1000, Date.now() - recordingStartedAt) : 0;
     const bytes = await invoke<number[]>('stop_native_recording');
     addDebugEvent('native_recording_audio_ready', { bytes: bytes.length, durationMs });
-    const text = autoPolishEnabled
-      ? await invoke<string>('transcribe_audio', {
-        provider: transcriptionProvider,
-        apiKey: activeTranscriptionKey(),
-        audioBytes: bytes,
-        vocabularyPrompt: buildVocabularyPrompt(),
-      })
-      : await invoke<string>('transcribe_and_paste', {
-        provider: transcriptionProvider,
-        apiKey: activeTranscriptionKey(),
-        audioBytes: bytes,
-        vocabularyPrompt: buildVocabularyPrompt(),
-      });
+    const text = await transcribeAudioBytes(bytes);
     addDebugEvent('native_transcription_result', { text, length: text.length });
     const cleanedText = cleanControlPhrasesBeforePolish(text);
     if (!cleanedText) {
@@ -1516,8 +1572,8 @@ async function finishNativeRecording(reason: string) {
     const finalText = await polishDictationIfEnabled(cleanedText);
     if (autoPolishEnabled) {
       addDebugEvent('native_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== cleanedText });
-      await pasteTextToFocusedApp(finalText);
     }
+    await pasteTextToFocusedApp(finalText);
     const stats = addHistory(finalText, durationMs);
     rewriteInput.value = finalText;
           setStatus('success', `${finalText !== cleanedText ? 'Native mic polished and pasted' : 'Native mic pasted'}: ${stats.words} words · ${stats.wordsPerMinute} WPM.`);
@@ -1585,13 +1641,13 @@ function openStreamingSocket() {
             ? [...streamingFinalParts, text].join(' ')
             : [...streamingFinalParts, text].join(' ');
           const delta = liveTranscript.substring(streamingLastPastedLength);
-          if (delta && isTauriRuntime && !autoPolishEnabled) {
+          if (delta && isTauriRuntime && !autoPolishEnabled && !hasTranscriptCorrections()) {
             streamingPastedLive = true;
             invoke('paste_transcript', { text: delta })
               .then(() => addDebugEvent('live_paste_delta', { delta, length: delta.length }))
               .catch((error) => addDebugEvent('live_paste_delta_failed', { delta, error: String(error) }));
           } else if (delta) {
-            addDebugEvent('live_paste_delta_browser_skipped', { delta, length: delta.length });
+            addDebugEvent(hasTranscriptCorrections() ? 'live_paste_delta_skipped_for_corrections' : 'live_paste_delta_browser_skipped', { delta, length: delta.length });
           }
           streamingLastPastedLength = Math.max(streamingLastPastedLength, liveTranscript.length);
           streamingTranscript = liveTranscript;
@@ -1718,7 +1774,9 @@ async function transcribeStreamingResult() {
     addDebugEvent('streaming_transcription_finish_result', { text, length: text.length, socketFailed: streamingSocketFailed });
 
     if (text) {
-      const cleanedText = cleanControlPhrasesBeforePolish(text);
+      const correctedText = applyTranscriptCorrections(text);
+      if (correctedText !== text) addDebugEvent('streaming_transcript_corrections_applied', { before: text, after: correctedText });
+      const cleanedText = cleanControlPhrasesBeforePolish(correctedText);
       if (!cleanedText) {
         setStatus('idle', 'Ignored wake/stop phrase only — nothing to paste.');
         return;
@@ -1774,19 +1832,7 @@ async function transcribeAndPaste() {
     const blob = new Blob(audioChunks, { type: 'audio/webm' });
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
 
-    const text = autoPolishEnabled
-      ? await invoke<string>('transcribe_audio', {
-        provider: transcriptionProvider,
-        apiKey: activeTranscriptionKey(),
-        audioBytes: bytes,
-        vocabularyPrompt: buildVocabularyPrompt(),
-      })
-      : await invoke<string>('transcribe_and_paste', {
-        provider: transcriptionProvider,
-        apiKey: activeTranscriptionKey(),
-        audioBytes: bytes,
-        vocabularyPrompt: buildVocabularyPrompt(),
-      });
+    const text = await transcribeAudioBytes(bytes);
     addDebugEvent('normal_transcription_result', { text, length: text.length });
 
     const cleanedText = cleanControlPhrasesBeforePolish(text);
@@ -1798,8 +1844,8 @@ async function transcribeAndPaste() {
     const finalText = await polishDictationIfEnabled(cleanedText);
     if (autoPolishEnabled) {
       addDebugEvent('normal_auto_polish_result', { text: finalText, length: finalText.length, changed: finalText !== cleanedText });
-      await pasteTextToFocusedApp(finalText);
     }
+    await pasteTextToFocusedApp(finalText);
 
     const stats = addHistory(finalText, durationMs);
     rewriteInput.value = finalText;
@@ -2041,16 +2087,73 @@ function activeTranscriptionKey() {
   return sarvamApiKeyInput.value.trim();
 }
 
-function buildVocabularyPrompt() {
-  const vocabulary = (vocabularyInput?.value || '')
+async function transcribeAudioBytes(audioBytes: number[]) {
+  const rawText = await invoke<string>('transcribe_audio', {
+    provider: transcriptionProvider,
+    apiKey: activeTranscriptionKey(),
+    audioBytes,
+    vocabularyPrompt: buildVocabularyPrompt(),
+  });
+  const correctedText = applyTranscriptCorrections(rawText);
+  if (correctedText !== rawText) addDebugEvent('transcript_corrections_applied', { before: rawText, after: correctedText });
+  return correctedText;
+}
+
+function glossaryTerms() {
+  return (vocabularyInput?.value || '')
     .split(/[\n,]/)
     .map((word) => word.trim())
     .filter(Boolean)
-    .slice(0, 80)
-    .join(', ');
+    .slice(0, 80);
+}
+
+function parsedTranscriptCorrections() {
+  return (correctionsInput?.value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line) => {
+      const match = line.match(/^(.*?)\s*(?:=>|->|=)\s*(.*?)$/);
+      if (!match) return null;
+      const from = match[1].trim();
+      const to = match[2].trim();
+      return from && to ? { from, to } : null;
+    })
+    .filter((item): item is { from: string; to: string } => Boolean(item))
+    .slice(0, 120);
+}
+
+function hasTranscriptCorrections() {
+  return parsedTranscriptCorrections().length > 0;
+}
+
+function applyTranscriptCorrections(text: string) {
+  let corrected = text;
+  for (const { from, to } of parsedTranscriptCorrections()) {
+    const escaped = escapeRegExp(from).replace(/\s+/g, '\\s+');
+    const boundaryStart = /^[\p{L}\p{N}]/u.test(from) ? '(?<![\\p{L}\\p{N}])' : '';
+    const boundaryEnd = /[\p{L}\p{N}]$/u.test(from) ? '(?![\\p{L}\\p{N}])' : '';
+    corrected = corrected.replace(new RegExp(`${boundaryStart}${escaped}${boundaryEnd}`, 'giu'), to);
+  }
+  return normalizeTranscriptText(corrected);
+}
+
+function renderGlossaryPreview() {
+  const terms = glossaryTerms();
+  if (wordPills) {
+    const visible = terms.slice(0, 16);
+    wordPills.innerHTML = visible.length
+      ? visible.map((term) => `<span>${escapeHtml(term)}</span>`).join('')
+      : '<span>Dixit</span><span>Ampere</span><span>OpenClaw</span>';
+  }
+  if (promptPreview) promptPreview.textContent = buildVocabularyPrompt() || 'No words yet.';
+}
+
+function buildVocabularyPrompt() {
+  const vocabulary = glossaryTerms().join(', ');
 
   if (!vocabulary) return '';
-  return `This is desktop dictation. Use these preferred spellings and common terms when heard: ${vocabulary}.`;
+  return `This is desktop dictation. Use these preferred spellings and common terms when heard: ${vocabulary}. Preserve capitalization and exact spelling for these terms.`;
 }
 
 function loadHistory(): HistoryItem[] {
