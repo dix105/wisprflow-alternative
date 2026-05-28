@@ -1,65 +1,58 @@
 {
   "name": "flowdesk-raycast",
   "title": "FlowDesk",
-  "description": "Dictation, snippets, AI commands, and transcript workflows inside Raycast.",
+  "description": "FlowDesk dictation, glossary, polishing, and transcript memory inside Raycast.",
   "icon": "icon.png",
   "author": "dix105",
   "license": "MIT",
   "platforms": ["macOS", "Windows"],
-  "categories": ["Productivity", "Developer Tools"],
-  "keywords": ["dictation", "speech", "snippets", "ai", "transcription", "flowdesk"],
+  "categories": ["Productivity"],
+  "keywords": ["dictation", "speech", "transcription", "whisper", "flowdesk"],
   "commands": [
     {
       "name": "index",
       "title": "Command Center",
-      "description": "Search FlowDesk commands for dictation, snippets, AI workflows, and transcripts.",
+      "description": "Open FlowDesk dictation, glossary, polishing, and transcript commands.",
       "mode": "view",
-      "keywords": ["root", "search", "launcher"]
+      "keywords": ["flowdesk", "dictation", "transcription"]
     },
     {
-      "name": "create-snippet",
-      "title": "Create Snippet",
-      "description": "Create a reusable snippet with an optional keyword and tags.",
+      "name": "transcribe-audio",
+      "title": "Transcribe Audio File",
+      "description": "Transcribe an audio file with Groq Whisper and FlowDesk glossary rules.",
       "mode": "view",
-      "keywords": ["text", "template", "keyword"]
+      "keywords": ["dictation", "whisper", "audio", "speech"]
     },
     {
-      "name": "search-snippets",
-      "title": "Search Snippets",
-      "description": "Search and paste saved snippets.",
+      "name": "words-glossary",
+      "title": "Words Glossary",
+      "description": "Manage preferred words and correction rules for FlowDesk transcription.",
       "mode": "view",
-      "keywords": ["paste", "text", "template"]
+      "keywords": ["words", "glossary", "corrections", "vocabulary"]
     },
     {
-      "name": "create-ai-command",
-      "title": "Create AI Command",
-      "description": "Save a reusable AI prompt command.",
+      "name": "polish-clipboard",
+      "title": "Polish Clipboard Text",
+      "description": "Polish clipboard text using FlowDesk rewrite behavior.",
       "mode": "view",
-      "keywords": ["prompt", "automation"]
-    },
-    {
-      "name": "run-ai-command",
-      "title": "Run AI Command",
-      "description": "Run saved AI commands against selected text or clipboard content.",
-      "mode": "view",
-      "keywords": ["rewrite", "summarize", "prompt"]
+      "keywords": ["rewrite", "polish", "clipboard"]
     },
     {
       "name": "transcript-memory",
       "title": "Transcript Memory",
-      "description": "Search and reuse saved dictation transcripts.",
+      "description": "Search and reuse FlowDesk dictation transcripts.",
       "mode": "view",
       "keywords": ["history", "dictation", "transcript"]
     }
   ],
   "preferences": [
     {
-      "name": "openaiApiKey",
-      "title": "OpenAI API Key",
-      "description": "Used by AI commands. Leave empty to use mock output while testing.",
+      "name": "groqApiKey",
+      "title": "Groq API Key",
+      "description": "Used for Whisper transcription and text polish.",
       "type": "password",
       "required": false,
-      "placeholder": "sk-..."
+      "placeholder": "gsk_..."
     }
   ],
   "scripts": {

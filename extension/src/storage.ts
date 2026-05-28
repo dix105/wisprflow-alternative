@@ -1,19 +1,8 @@
 import { LocalStorage } from "@raycast/api";
 
-export type Snippet = {
-  id: string;
-  name: string;
-  keyword?: string;
-  text: string;
-  tags: string[];
-  createdAt: string;
-};
-
-export type AICommand = {
-  id: string;
-  name: string;
-  prompt: string;
-  createdAt: string;
+export type GlossarySettings = {
+  preferredWords: string;
+  corrections: string;
 };
 
 export type Transcript = {
@@ -23,8 +12,7 @@ export type Transcript = {
   createdAt: string;
 };
 
-const SNIPPETS_KEY = "flowdesk.snippets";
-const AI_COMMANDS_KEY = "flowdesk.aiCommands";
+const GLOSSARY_KEY = "flowdesk.glossary";
 const TRANSCRIPTS_KEY = "flowdesk.transcripts";
 
 async function readJson<T>(key: string, fallback: T): Promise<T> {
@@ -41,36 +29,19 @@ async function writeJson<T>(key: string, value: T) {
   await LocalStorage.setItem(key, JSON.stringify(value));
 }
 
-export async function getSnippets() {
-  return readJson<Snippet[]>(SNIPPETS_KEY, []);
+export async function getGlossary(): Promise<GlossarySettings> {
+  return readJson<GlossarySettings>(GLOSSARY_KEY, {
+    preferredWords: "Dixit\nFlowDesk\nOpenClaw\nAmpere\nMaxStudio\nChromaStudio\nRemix AI",
+    corrections: "whisper flow => WisprFlow\nopen claw => OpenClaw\nflow desk => FlowDesk",
+  });
 }
 
-export async function saveSnippet(snippet: Snippet) {
-  const snippets = await getSnippets();
-  await writeJson(SNIPPETS_KEY, [snippet, ...snippets.filter((item) => item.id !== snippet.id)]);
-}
-
-export async function deleteSnippet(id: string) {
-  const snippets = await getSnippets();
-  await writeJson(SNIPPETS_KEY, snippets.filter((item) => item.id !== id));
-}
-
-export async function getAICommands() {
-  return readJson<AICommand[]>(AI_COMMANDS_KEY, defaultAICommands());
-}
-
-export async function saveAICommand(command: AICommand) {
-  const commands = await getAICommands();
-  await writeJson(AI_COMMANDS_KEY, [command, ...commands.filter((item) => item.id !== command.id)]);
-}
-
-export async function deleteAICommand(id: string) {
-  const commands = await getAICommands();
-  await writeJson(AI_COMMANDS_KEY, commands.filter((item) => item.id !== id));
+export async function saveGlossary(settings: GlossarySettings) {
+  await writeJson(GLOSSARY_KEY, settings);
 }
 
 export async function getTranscripts() {
-  return readJson<Transcript[]>(TRANSCRIPTS_KEY, defaultTranscripts());
+  return readJson<Transcript[]>(TRANSCRIPTS_KEY, []);
 }
 
 export async function saveTranscript(transcript: Transcript) {
@@ -78,40 +49,37 @@ export async function saveTranscript(transcript: Transcript) {
   await writeJson(TRANSCRIPTS_KEY, [transcript, ...transcripts.filter((item) => item.id !== transcript.id)]);
 }
 
+export async function deleteTranscript(id: string) {
+  const transcripts = await getTranscripts();
+  await writeJson(TRANSCRIPTS_KEY, transcripts.filter((item) => item.id !== id));
+}
+
 export function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function defaultAICommands(): AICommand[] {
-  return [
-    {
-      id: "rewrite-clear",
-      name: "Rewrite Clearly",
-      prompt: "Rewrite this text clearly and keep the meaning intact:",
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: "extract-actions",
-      name: "Extract Action Items",
-      prompt: "Extract action items, owners, and deadlines from this text:",
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: "reply-draft",
-      name: "Draft Reply",
-      prompt: "Draft a concise professional reply to this message:",
-      createdAt: new Date().toISOString(),
-    },
-  ];
+export function buildVocabularyPrompt(settings: GlossarySettings) {
+  const words = settings.preferredWords
+    .split(/[\n,]/)
+    .map((word) => word.trim())
+    .filter(Boolean)
+    .slice(0, 80)
+    .join(", ");
+
+  if (!words) return "";
+  return `This is desktop dictation. Use these preferred spellings and common terms when heard: ${words}. Preserve capitalization and exact spelling for these terms.`;
 }
 
-function defaultTranscripts(): Transcript[] {
-  return [
-    {
-      id: "welcome-transcript",
-      text: "Welcome to FlowDesk. Save dictations here, then reuse them from Raycast.",
-      source: "Example",
-      createdAt: new Date().toISOString(),
-    },
-  ];
+export function applyCorrections(text: string, corrections: string) {
+  let output = text;
+  for (const line of corrections.split("\n")) {
+    const match = line.trim().match(/^(.*?)\s*(?:=>|->|=)\s*(.*?)$/);
+    if (!match) continue;
+    const from = match[1].trim();
+    const to = match[2].trim();
+    if (!from || !to) continue;
+    const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    output = output.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu"), to);
+  }
+  return output.replace(/\s+/g, " ").trim();
 }

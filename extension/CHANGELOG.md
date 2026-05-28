@@ -1,7 +1,8 @@
 # FlowDesk Changelog
 
-## [Initial Raycast Extension] - 2026-05-28
+## [FlowDesk-Only Extension] - 2026-05-28
 
-- Add standalone Raycast extension scaffold.
-- Add command center, snippets, AI commands, and transcript memory commands.
-- Store local data in Raycast LocalStorage for early testing.
+- Keep extension focused on FlowDesk features only.
+- Add audio-file transcription with Groq Whisper.
+- Add Words Glossary for preferred spellings and correction rules.
+- Add clipboard polish and transcript memory.

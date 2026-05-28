@@ -1,15 +1,18 @@
 # FlowDesk Raycast Extension
 
-A standalone Raycast extension for users who already live inside Raycast. They do **not** need to install the FlowDesk desktop app.
+A standalone Raycast extension for users who already use Raycast. They do **not** need to install the FlowDesk desktop app.
 
-## Commands
+## FlowDesk-only commands
 
-- **Command Center** — one searchable entry point for all FlowDesk workflows.
-- **Create Snippet** — save reusable text with keyword and tags.
-- **Search Snippets** — search, copy, or paste saved snippets.
-- **Create AI Command** — save reusable prompt commands.
-- **Run AI Command** — run saved prompts on clipboard/selected text.
-- **Transcript Memory** — search and reuse dictation transcripts.
+- **Command Center** — searchable entry point for FlowDesk commands.
+- **Transcribe Audio File** — transcribe an audio file with Groq Whisper, preferred words, and correction rules.
+- **Words Glossary** — manage preferred spellings and auto-corrections.
+- **Polish Clipboard Text** — rewrite copied text into clean FlowDesk-style output.
+- **Transcript Memory** — save, search, copy, and paste transcripts.
+
+## Setup
+
+Add a Groq API key in Raycast preferences for this extension.
 
 ## Development
 
@@ -18,8 +21,8 @@ npm install
 npm run dev
 ```
 
-Raycast will load the extension in development mode.
+## Build
 
-## Notes
-
-This first version stores snippets, AI commands, and transcripts in Raycast LocalStorage. Later we can add sync, real dictation APIs, and FlowDesk cloud/desktop bridge integration.
+```bash
+npm run build
+```
