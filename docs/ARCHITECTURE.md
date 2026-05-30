@@ -44,3 +44,13 @@
 - Recognized commands emit `voice-command-detected`; the frontend calls `open_voice_target`.
 - `open_voice_target` maps known targets to app schemes or web URLs and opens them via OS shell.
 - This path intentionally does not use an LLM for the core open-app commands; exact grammar is faster and safer. Cerebras/GPT-OSS can be layered later for fuzzy commands like “open my notes app” or “message Harshil on Telegram”.
+
+### GPT-OSS command brain
+
+- Optional setting: `flowDeskAiVoiceCommands` with `cerebrasApiKey`.
+- Exact grammar commands still execute first for speed.
+- If exact parsing returns `none`, the frontend calls `classify_voice_command`.
+- `classify_voice_command` uses Cerebras OpenAI-compatible chat completions at `https://api.cerebras.ai/v1/chat/completions` with model `gpt-oss-120b`.
+- The model must return JSON: `{ "action": "open|close|none", "target": "...", "confidence": 0-1, "reason": "..." }`.
+- The app only acts when confidence is at least `0.65`.
+- Close commands are deliberately limited to known mapped desktop apps on Windows.

@@ -155,6 +155,14 @@ struct GroqChatMessage {
     content: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct VoiceCommandDecision {
+    action: String,
+    target: String,
+    confidence: f32,
+    reason: String,
+}
+
 #[tauri::command]
 async fn transcribe_audio(
     provider: Option<String>,
@@ -404,6 +412,9 @@ $grammarBuilder.Culture = $recognizer.RecognizerInfo.Culture
 [void]$grammarBuilder.Append($choices)
 $grammar = New-Object System.Speech.Recognition.Grammar($grammarBuilder)
 $recognizer.LoadGrammar($grammar)
+$dictation = New-Object System.Speech.Recognition.DictationGrammar
+$dictation.Name = 'FlowDesk freeform app command'
+$recognizer.LoadGrammar($dictation)
 $recognizer.SetInputToDefaultAudioDevice()
 Register-ObjectEvent -InputObject $recognizer -EventName SpeechRecognized -Action {
   if ($EventArgs.Result.Confidence -ge 0.55) {
@@ -1396,6 +1407,110 @@ fn open_voice_target(target: String) -> Result<(), String> {
     open_destination(destination)
 }
 
+#[tauri::command]
+fn close_voice_target(target: String) -> Result<(), String> {
+    let target = normalize_voice_target(&target);
+    #[cfg(windows)]
+    {
+        let processes: &[&str] = match target.as_str() {
+            "notion" => &["Notion.exe"],
+            "telegram" => &["Telegram.exe"],
+            "discord" => &["Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe"],
+            "whatsapp" => &["WhatsApp.exe"],
+            "chrome" => &["chrome.exe"],
+            _ => return Err(format!("Closing {target} is not mapped yet")),
+        };
+        for process in processes {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/IM", process, "/T", "/F"])
+                .status();
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        Err("Close voice commands are only mapped on Windows right now".into())
+    }
+}
+
+#[tauri::command]
+async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCommandDecision, String> {
+    if api_key.trim().is_empty() {
+        return Err("Missing Cerebras API key".into());
+    }
+    let input = text.trim();
+    if input.is_empty() {
+        return Err("No voice command text to classify".into());
+    }
+
+    let targets = "notion, telegram, discord, x, twitter, whatsapp, chrome, gmail, calendar, github";
+    let body = serde_json::json!({
+        "model": "gpt-oss-120b",
+        "temperature": 0,
+        "max_tokens": 120,
+        "messages": [
+            {
+                "role": "system",
+                "content": format!("You classify always-on desktop voice commands. Return ONLY compact JSON with keys action,target,confidence,reason. action must be open, close, or none. target must be one of: {targets}; use x for Twitter/X. If the user is not clearly asking to open or close one of those targets, action none and target empty. Be conservative because this controls the user's computer.")
+            },
+            { "role": "user", "content": input }
+        ]
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.cerebras.ai/v1/chat/completions")
+        .bearer_auth(api_key.trim())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Cerebras request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Cerebras API error {status}: {body}"));
+    }
+
+    let completion: GroqChatResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse Cerebras response: {e}"))?;
+    let content = completion
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim().to_string())
+        .unwrap_or_default();
+    let json = extract_json_object(&content).ok_or_else(|| format!("Cerebras returned non-JSON: {content}"))?;
+    let mut decision: VoiceCommandDecision = serde_json::from_str(json)
+        .map_err(|e| format!("Could not parse Cerebras command JSON: {e}: {content}"))?;
+    decision.action = decision.action.trim().to_lowercase();
+    decision.target = normalize_voice_target(&decision.target);
+    if !matches!(decision.action.as_str(), "open" | "close" | "none") {
+        decision.action = "none".into();
+    }
+    if decision.action == "none" {
+        decision.target.clear();
+    }
+    decision.confidence = decision.confidence.clamp(0.0, 1.0);
+    Ok(decision)
+}
+
+fn normalize_voice_target(target: &str) -> String {
+    match target.trim().to_lowercase().as_str() {
+        "twitter" => "x".into(),
+        other => other.to_string(),
+    }
+}
+
+fn extract_json_object(value: &str) -> Option<&str> {
+    let start = value.find('{')?;
+    let end = value.rfind('}')?;
+    value.get(start..=end)
+}
+
 fn open_destination(destination: &str) -> Result<(), String> {
     #[cfg(windows)]
     let status = std::process::Command::new("cmd")
@@ -1604,6 +1719,8 @@ pub fn run() {
             rewrite_text,
             paste_transcript,
             open_voice_target,
+            close_voice_target,
+            classify_voice_command,
             copy_selected_text,
             save_transcript,
             load_transcripts,
