@@ -128,7 +128,6 @@ let streamingSendPromises: Promise<void>[] = [];
 let streamingSocketOpened = false;
 let streamingSocketFailed = false;
 let streamingPastedLive = false;
-let pendingVoiceCommand: VoiceCommandDecision | null = null;
 let debugEvents: { time: string; label: string; data?: unknown }[] = [];
 let pushToTalkListenersReady = false;
 let waveformContext: AudioContext | null = null;
@@ -1428,21 +1427,6 @@ async function stopVoiceCommands() {
 
 async function handleVoiceCommand(payload: string) {
   const [phrase, confidence = ''] = payload.split('|');
-  if (pendingVoiceCommand && isConfirmationPhrase(phrase || '')) {
-    const decision = pendingVoiceCommand;
-    pendingVoiceCommand = null;
-    await executeVoiceCommandDecision(decision, confidence);
-    return;
-  }
-  if (pendingVoiceCommand && isCancelPhrase(phrase || '')) {
-    const cancelled = pendingVoiceCommand;
-    pendingVoiceCommand = null;
-    addDebugEvent('voice_command_cancelled', cancelled);
-    setStatus('idle', `Cancelled ${cancelled.action} ${providerFriendlyTarget(cancelled.target)}.`);
-    await speakCommandPreview('Cancelled.');
-    return;
-  }
-
   let decision = parseVoiceCommandDecision(phrase || '');
   addDebugEvent('voice_command_detected', { phrase, confidence, decision });
   if (decision.action === 'none' && aiVoiceCommandsEnabled) {
@@ -1450,10 +1434,10 @@ async function handleVoiceCommand(payload: string) {
     addDebugEvent('voice_command_ai_decision', decision);
   }
   if (decision.action === 'none' || !decision.target) return;
-  pendingVoiceCommand = decision;
-  const preview = `I will ${decision.action} ${providerFriendlyTarget(decision.target)}. Say okay to confirm, or cancel.`;
+  const preview = `I will ${decision.action} ${providerFriendlyTarget(decision.target)}.`;
   setStatus('working', preview);
   await speakCommandPreview(preview);
+  await executeVoiceCommandDecision(decision, confidence);
 }
 
 async function executeVoiceCommandDecision(decision: VoiceCommandDecision, confidence = '') {
@@ -1464,14 +1448,6 @@ async function executeVoiceCommandDecision(decision: VoiceCommandDecision, confi
   } catch (error) {
     setStatus('error', String(error));
   }
-}
-
-function isConfirmationPhrase(phrase: string) {
-  return /^(ok|okay|confirm|yes|yeah|yep|do it|go ahead)$/i.test(phrase.trim());
-}
-
-function isCancelPhrase(phrase: string) {
-  return /^(cancel|no|nope|stop|don't|do not)$/i.test(phrase.trim());
 }
 
 async function speakCommandPreview(text: string) {
