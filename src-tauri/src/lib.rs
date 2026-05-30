@@ -66,6 +66,8 @@ static NATIVE_RECORDER: OnceLock<Mutex<Option<NativeRecordingState>>> = OnceLock
 static WAKE_WORD_LISTENER: OnceLock<Mutex<Option<WakeWordListenerState>>> = OnceLock::new();
 #[cfg(windows)]
 static WINDOWS_SPEECH_LISTENER: OnceLock<Mutex<Option<WindowsSpeechListenerState>>> = OnceLock::new();
+#[cfg(windows)]
+static WINDOWS_COMMAND_LISTENER: OnceLock<Mutex<Option<WindowsSpeechListenerState>>> = OnceLock::new();
 
 #[cfg(windows)]
 struct NativeRecordingState {
@@ -469,6 +471,108 @@ fn stop_windows_speech_listener() -> Result<(), String> {
     {
     let listener = WINDOWS_SPEECH_LISTENER.get_or_init(|| Mutex::new(None));
     let mut guard = listener.lock().map_err(|_| "Windows speech listener lock failed".to_string())?;
+    if let Some(mut state) = guard.take() {
+        let _ = state.child.kill();
+        let _ = state.child.wait();
+    }
+    Ok(())
+    }
+}
+
+#[tauri::command]
+fn start_windows_command_listener(_app: tauri::AppHandle, _commands: Vec<String>) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = _app;
+        let _ = _commands;
+        return Err("Always-on voice commands are only available on Windows right now".into());
+    }
+
+    #[cfg(windows)]
+    {
+    let app = _app;
+    let commands: Vec<String> = _commands
+        .into_iter()
+        .map(|command| command.trim().to_string())
+        .filter(|command| !command.is_empty())
+        .collect();
+    if commands.is_empty() {
+        return Err("No voice commands configured".into());
+    }
+
+    stop_windows_command_listener()?;
+
+    let listener = WINDOWS_COMMAND_LISTENER.get_or_init(|| Mutex::new(None));
+    let mut guard = listener.lock().map_err(|_| "Windows command listener lock failed".to_string())?;
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Speech
+$commands = ($env:FLOWDESK_COMMANDS -split "\n") | Where-Object { $_.Trim().Length -gt 0 }
+$recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine ([System.Globalization.CultureInfo]::CurrentCulture)
+$choices = New-Object System.Speech.Recognition.Choices
+foreach ($command in $commands) { [void]$choices.Add($command) }
+$grammarBuilder = New-Object System.Speech.Recognition.GrammarBuilder
+$grammarBuilder.Culture = $recognizer.RecognizerInfo.Culture
+[void]$grammarBuilder.Append($choices)
+$grammar = New-Object System.Speech.Recognition.Grammar($grammarBuilder)
+$recognizer.LoadGrammar($grammar)
+$recognizer.SetInputToDefaultAudioDevice()
+Register-ObjectEvent -InputObject $recognizer -EventName SpeechRecognized -Action {
+  if ($EventArgs.Result.Confidence -ge 0.50) {
+    [Console]::Out.WriteLine(('FLOWDESK_COMMAND:' + $EventArgs.Result.Text + '|' + $EventArgs.Result.Confidence))
+    [Console]::Out.Flush()
+  }
+} | Out-Null
+$recognizer.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple)
+while ($true) { Start-Sleep -Milliseconds 250 }
+"#;
+
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .env("FLOWDESK_COMMANDS", commands.join("\n"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start Windows command listener: {e}"))?;
+
+    if let Some(stdout) = child.stdout.take() {
+        let app = app.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                if let Some(payload) = line.strip_prefix("FLOWDESK_COMMAND:") {
+                    let _ = app.emit("voice-command-detected", payload.to_string());
+                }
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                eprintln!("windows command listener: {line}");
+            }
+        });
+    }
+
+    *guard = Some(WindowsSpeechListenerState { child });
+    Ok(())
+    }
+}
+
+#[tauri::command]
+fn stop_windows_command_listener() -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+    let listener = WINDOWS_COMMAND_LISTENER.get_or_init(|| Mutex::new(None));
+    let mut guard = listener.lock().map_err(|_| "Windows command listener lock failed".to_string())?;
     if let Some(mut state) = guard.take() {
         let _ = state.child.kill();
         let _ = state.child.wait();
@@ -1274,6 +1378,47 @@ fn paste_transcript(text: String) -> Result<(), String> {
     paste_text(text.trim())
 }
 
+#[tauri::command]
+fn open_voice_target(target: String) -> Result<(), String> {
+    let target = target.trim().to_lowercase();
+    let destination = match target.as_str() {
+        "notion" => "notion://www.notion.so",
+        "telegram" => "tg://",
+        "discord" => "discord://",
+        "x" | "twitter" => "https://x.com",
+        "whatsapp" => "whatsapp://",
+        "chrome" => "https://www.google.com",
+        "gmail" => "https://mail.google.com",
+        "calendar" => "https://calendar.google.com",
+        "github" => "https://github.com",
+        _ => return Err(format!("Unknown voice target: {target}")),
+    };
+    open_destination(destination)
+}
+
+fn open_destination(destination: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", destination])
+        .status();
+
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .arg(destination)
+        .status();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open")
+        .arg(destination)
+        .status();
+
+    status
+        .map_err(|e| format!("Could not open {destination}: {e}"))?
+        .success()
+        .then_some(())
+        .ok_or_else(|| format!("Open command failed for {destination}"))
+}
+
 fn paste_text(text: &str) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard unavailable: {e}"))?;
     clipboard
@@ -1458,6 +1603,7 @@ pub fn run() {
             transcribe_and_paste,
             rewrite_text,
             paste_transcript,
+            open_voice_target,
             copy_selected_text,
             save_transcript,
             load_transcripts,
@@ -1469,6 +1615,8 @@ pub fn run() {
             stop_wake_word_listener,
             start_windows_speech_listener,
             stop_windows_speech_listener,
+            start_windows_command_listener,
+            stop_windows_command_listener,
             start_native_recording,
             stop_native_recording,
             start_audio_ducking,

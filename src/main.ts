@@ -7,6 +7,7 @@ import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
 const DEFAULT_SHORTCUT = 'CommandOrControl+Alt+Space';
 const DEFAULT_POLISH_SHORTCUT = 'CommandOrControl+Shift+P';
 const HISTORY_KEY = 'flowDeskHistory';
+const MEETINGS_KEY = 'flowDeskMeetings';
 const VOCABULARY_KEY = 'flowDeskVocabulary';
 const PROVIDER_KEY = 'flowDeskProvider';
 const ELEVENLABS_KEY = 'elevenLabsApiKey';
@@ -24,6 +25,7 @@ const NATIVE_MIC_KEY = 'flowDeskNativeMic';
 const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const AUTO_POLISH_KEY = 'flowDeskAutoPolish';
 const VOICE_TRIGGER_KEY = 'flowDeskVoiceTrigger';
+const VOICE_COMMANDS_KEY = 'flowDeskVoiceCommands';
 const VOICE_TRIGGER_PHRASE_KEY = 'flowDeskVoiceTriggerPhrase';
 const VOICE_STOP_PHRASE_KEY = 'flowDeskVoiceStopPhrase';
 const VOICE_TRIGGER_ENGINE_KEY = 'flowDeskVoiceTriggerEngine';
@@ -37,7 +39,7 @@ const RECORDING_CHUNK_MS = 250;
 const RECORDING_START_BEEP_MS = 180;
 
 type StatusKind = 'idle' | 'recording' | 'working' | 'error' | 'success';
-type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad';
+type ViewName = 'dictation' | 'dictionary' | 'snippets' | 'style' | 'transforms' | 'scratchpad' | 'meeting';
 type RewriteMode = 'clean' | 'polish' | 'professional' | 'shorter' | 'friendly';
 type TranscriptionProvider = 'groq' | 'elevenlabs' | 'sarvam' | 'deepgram';
 type RecordingMode = 'hold' | 'toggle';
@@ -54,8 +56,22 @@ type HistoryItem = {
   rewriteMode?: RewriteMode;
 };
 
+type MeetingRecord = {
+  id: string;
+  title: string;
+  createdAt: string;
+  durationMs: number;
+  provider: TranscriptionProvider;
+  transcript: string;
+};
+
 let recorder: MediaRecorder | null = null;
 let chunks: BlobPart[] = [];
+let meetingRecorder: MediaRecorder | null = null;
+let meetingChunks: BlobPart[] = [];
+let meetingStartedAt = 0;
+let meetingTimer = 0;
+let meetingRecords: MeetingRecord[] = loadMeetings();
 let shortcut = localStorage.getItem('shortcut') || DEFAULT_SHORTCUT;
 let polishShortcut = localStorage.getItem(POLISH_SHORTCUT_KEY) || DEFAULT_POLISH_SHORTCUT;
 let captureTarget: 'dictation' | 'polish' | null = null;
@@ -79,6 +95,7 @@ let fastMicEnabled = localStorage.getItem(FAST_MIC_KEY) === 'true';
 let nativeMicEnabled = localStorage.getItem(NATIVE_MIC_KEY) !== 'false';
 let autoPolishEnabled = localStorage.getItem(AUTO_POLISH_KEY) === 'true';
 let voiceTriggerEnabled = localStorage.getItem(VOICE_TRIGGER_KEY) === 'true';
+let voiceCommandsEnabled = localStorage.getItem(VOICE_COMMANDS_KEY) === 'true';
 let voiceTriggerEngine = (localStorage.getItem(VOICE_TRIGGER_ENGINE_KEY) as VoiceTriggerEngine) || 'openwakeword';
 let voiceTriggerPhrase = localStorage.getItem(VOICE_TRIGGER_PHRASE_KEY) || 'start typing';
 let voiceStopPhrase = localStorage.getItem(VOICE_STOP_PHRASE_KEY) || 'stop typing';
@@ -129,6 +146,7 @@ app.innerHTML = `
 
         <nav class="nav-list" aria-label="Primary">
           <button class="nav-item active" data-view="dictation" type="button"><span>⌘</span>Home</button>
+          <button class="nav-item" data-view="meeting" type="button"><span>●</span>Meeting</button>
           <button class="nav-item" data-view="dictionary" type="button"><span>Ab</span>Words</button>
           <button class="nav-item" data-view="scratchpad" type="button"><span>▤</span>Scratchpad</button>
           <button class="nav-item" data-view="transforms" type="button"><span>✦</span>Polish text</button>
@@ -288,6 +306,25 @@ max studio => MaxStudio"></textarea>
           <section class="rewrite-layout"><article class="transform-card"><div class="section-heading"><p class="eyebrow">Rewrite input</p><h2>Clean up rough dictation</h2></div><textarea id="rewriteInput" placeholder="Record something or paste text here..."></textarea><div class="shortcut-hint">Press <kbd>Cmd/Ctrl</kbd> + <kbd>Enter</kbd> to polish writing</div><div class="rewrite-actions"><button data-rewrite="clean" type="button">Clean up</button><button data-rewrite="polish" type="button">Polish writing</button><button data-rewrite="professional" type="button">Professional</button><button data-rewrite="shorter" type="button">Shorter</button><button data-rewrite="friendly" type="button">Friendly</button></div></article><article class="transform-card"><div class="section-heading"><p class="eyebrow">Output</p><h2>Ready text</h2></div><div id="rewriteOutput" class="rewrite-output empty">Your rewritten text will appear here.</div><div class="promo-actions"><button id="copyRewrite" type="button">Copy</button><button id="pasteRewrite" class="primary-btn" type="button"><span class="button-dot"></span>Paste</button></div></article></section>
         </section>
 
+        <section class="view-panel" data-panel="meeting">
+          <header class="page-head scratchpad-head">
+            <div><h1>Meeting transcription</h1><p>Record a longer conversation, transcribe it with the active provider, and save the transcript locally without pasting anywhere.</p></div>
+            <button id="meetingToggle" class="primary-btn small" type="button"><span class="button-dot"></span>Start meeting</button>
+          </header>
+          <article class="meeting-console">
+            <div>
+              <span class="console-kicker">Meeting mode</span>
+              <h2 id="meetingTimer">00:00</h2>
+              <p id="meetingStatus">Ready. Uses your active provider and local API key.</p>
+            </div>
+            <label class="field meeting-title-field"><span>Meeting title</span><input id="meetingTitle" type="text" autocomplete="off" placeholder="Untitled meeting" /></label>
+          </article>
+          <article class="scratchpad-panel">
+            <div class="scratchpad-toolbar"><span>Recent meetings</span><small>Stored locally in this browser profile</small></div>
+            <div id="meetingList" class="history-list meeting-list"></div>
+          </article>
+        </section>
+
         <section class="view-panel" data-panel="scratchpad">
           <header class="page-head scratchpad-head">
             <div><h1>Scratchpad</h1><p>Recovered dictations, copied text, and rewrite-ready transcripts.</p></div>
@@ -305,7 +342,7 @@ max studio => MaxStudio"></textarea>
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" data-settings-tab="general" type="button">☷ General</button><button data-settings-tab="voice" type="button">◉ Voice trigger</button><button data-settings-tab="audio" type="button">▭ Audio</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Beep sound</strong><span>Pick the recording start/stop sound style.</span></div><select id="recordingBeepStyle"><option value="chime">Chime — bright</option><option value="classic">Classic — recorder beep</option><option value="digital">Digital — crisp</option><option value="soft">Soft — gentle</option></select></label><label class="settings-row"><div><strong>Beep volume</strong><span>Recording start/stop sound volume.</span></div><input id="recordingBeepVolume" type="range" min="0" max="100" step="5" /><span id="recordingBeepVolumeValue">55%</span></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test beep</strong><span>Play the selected start and stop beep.</span></div><button id="testRecordingBeep" class="soft-btn" type="button">Play beep</button></div><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Always-on app commands</strong><span>No shortcut. Say “open Notion”, “open Telegram”, “open Discord”, “open X”, “open WhatsApp”, “open Gmail”, or “open GitHub”.</span></div><input id="voiceCommands" type="checkbox" /></label><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Beep sound</strong><span>Pick the recording start/stop sound style.</span></div><select id="recordingBeepStyle"><option value="chime">Chime — bright</option><option value="classic">Classic — recorder beep</option><option value="digital">Digital — crisp</option><option value="soft">Soft — gentle</option></select></label><label class="settings-row"><div><strong>Beep volume</strong><span>Recording start/stop sound volume.</span></div><input id="recordingBeepVolume" type="range" min="0" max="100" step="5" /><span id="recordingBeepVolumeValue">55%</span></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test beep</strong><span>Play the selected start and stop beep.</span></div><button id="testRecordingBeep" class="soft-btn" type="button">Play beep</button></div><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
       </section>
     </aside>
 
@@ -352,6 +389,7 @@ const pauseBackgroundMediaInput = document.querySelector<HTMLInputElement>('#pau
 const autoPolishInput = document.querySelector<HTMLInputElement>('#autoPolish')!;
 const fastMicInput = document.querySelector<HTMLInputElement>('#fastMic')!;
 const nativeMicInput = document.querySelector<HTMLInputElement>('#nativeMic')!;
+const voiceCommandsInput = document.querySelector<HTMLInputElement>('#voiceCommands')!;
 const voiceTriggerInput = document.querySelector<HTMLInputElement>('#voiceTrigger')!;
 const voiceTriggerEngineInput = document.querySelector<HTMLSelectElement>('#voiceTriggerEngine')!;
 const voiceTriggerPhraseInput = document.querySelector<HTMLInputElement>('#voiceTriggerPhrase')!;
@@ -375,6 +413,11 @@ const miniWidgetState = document.querySelector<HTMLElement>('#miniWidgetState')!
 const rewriteInput = document.querySelector<HTMLTextAreaElement>('#rewriteInput')!;
 const rewriteOutput = document.querySelector<HTMLElement>('#rewriteOutput')!;
 const historyList = document.querySelector<HTMLElement>('#historyList')!;
+const meetingToggleButton = document.querySelector<HTMLButtonElement>('#meetingToggle')!;
+const meetingTimerEl = document.querySelector<HTMLElement>('#meetingTimer')!;
+const meetingStatusEl = document.querySelector<HTMLElement>('#meetingStatus')!;
+const meetingTitleInput = document.querySelector<HTMLInputElement>('#meetingTitle')!;
+const meetingList = document.querySelector<HTMLElement>('#meetingList')!;
 const openRewriteButton = document.querySelector<HTMLButtonElement>('#openRewrite');
 const copyRewriteButton = document.querySelector<HTMLButtonElement>('#copyRewrite')!;
 const pasteRewriteButton = document.querySelector<HTMLButtonElement>('#pasteRewrite')!;
@@ -397,11 +440,13 @@ renderGlossaryPreview();
 renderShortcut(shortcut);
 renderPolishShortcut(polishShortcut);
 renderHistory();
+renderMeetings();
 renderStats();
 pauseBackgroundMediaInput.checked = pauseBackgroundMediaEnabled;
 autoPolishInput.checked = autoPolishEnabled;
 fastMicInput.checked = fastMicEnabled;
 nativeMicInput.checked = nativeMicEnabled;
+voiceCommandsInput.checked = voiceCommandsEnabled;
 voiceTriggerInput.checked = voiceTriggerEnabled;
 voiceTriggerEngineInput.value = voiceTriggerEngine;
 voiceTriggerPhraseInput.value = voiceTriggerPhrase;
@@ -422,6 +467,13 @@ if (voiceTriggerEnabled) setTimeout(() => startVoiceTrigger().catch((error) => {
   localStorage.setItem(VOICE_TRIGGER_KEY, 'false');
   setStatus('error', `Voice trigger failed: ${String(error)}`);
 }), 350);
+if (voiceCommandsEnabled) setTimeout(() => startVoiceCommands().catch((error) => {
+  addDebugEvent('voice_commands_autostart_failed', String(error));
+  voiceCommandsEnabled = false;
+  voiceCommandsInput.checked = false;
+  localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
+  setStatus('error', `Voice commands failed: ${String(error)}`);
+}), 450);
 
 // Load full history from disk (async, replaces localStorage snapshot)
 // Wrapped in setTimeout to ensure it never blocks shortcut registration
@@ -449,6 +501,12 @@ deepgramApiKeyInput.addEventListener('change', syncDeepgramKey);
 deepgramStreamingInput.addEventListener('change', () => {
   deepgramStreamingEnabled = deepgramStreamingInput.checked;
   localStorage.setItem(DEEPGRAM_STREAMING_KEY, String(deepgramStreamingEnabled));
+});
+voiceCommandsInput.addEventListener('change', async () => {
+  voiceCommandsEnabled = voiceCommandsInput.checked;
+  localStorage.setItem(VOICE_COMMANDS_KEY, String(voiceCommandsEnabled));
+  if (voiceCommandsEnabled) await startVoiceCommands();
+  else await stopVoiceCommands();
 });
 debugExpectedWordsInput.addEventListener('input', () => localStorage.setItem(DEBUG_EXPECTED_WORDS_KEY, debugExpectedWordsInput.value.trim()));
 copyDebugBundleButton.addEventListener('click', async () => {
@@ -532,6 +590,7 @@ saveButton.addEventListener('click', () => installShortcut(shortcut));
 saveMirrorButton.addEventListener('click', () => installShortcut(shortcut));
 savePolishShortcutButton.addEventListener('click', () => installPolishShortcut(polishShortcut));
 toggleButton.addEventListener('click', () => toggleRecording());
+meetingToggleButton.addEventListener('click', () => toggleMeetingRecording());
 miniWidget.addEventListener('click', () => toggleRecording());
 settingsButton?.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
@@ -801,6 +860,7 @@ function setView(view: ViewName) {
     panel.classList.toggle('active', (panel as HTMLElement).dataset.panel === view);
   });
   if (view === 'scratchpad') renderHistory();
+  if (view === 'meeting') renderMeetings();
   if (view === 'transforms') hydrateRewriteFromHistory();
 }
 
@@ -1281,6 +1341,7 @@ async function setupPushToTalkListeners() {
   pushToTalkListenersReady = true;
 
   await listen('push-to-talk-debug', (event) => addDebugEvent('push_to_talk_native_debug', event.payload));
+  await listen<string>('voice-command-detected', (event) => handleVoiceCommand(String(event.payload)));
   await listen('wake-word-detected', (event) => {
     addDebugEvent('wake_word_detected', { probability: event.payload });
     startRecordingFromVoiceTrigger();
@@ -1298,6 +1359,65 @@ async function setupPushToTalkListeners() {
     if (recordingMode === 'hold') stopRecordingFromPushToTalk();
     else addDebugEvent('push_to_talk_up_ignored_toggle_mode');
   });
+}
+
+const voiceCommandTargets = ['notion', 'telegram', 'discord', 'x', 'twitter', 'whatsapp', 'gmail', 'calendar', 'github', 'chrome'] as const;
+
+function voiceCommandPhrases() {
+  return voiceCommandTargets.flatMap((target) => [
+    `open ${target}`,
+    `${target} open`,
+    `launch ${target}`,
+    `start ${target}`,
+  ]);
+}
+
+async function startVoiceCommands() {
+  if (!isTauriRuntime) {
+    setStatus('idle', 'Always-on voice commands run inside the desktop app.');
+    return;
+  }
+  await setupPushToTalkListeners();
+  await invoke('start_windows_command_listener', { commands: voiceCommandPhrases() });
+  addDebugEvent('voice_commands_started', { commands: voiceCommandPhrases().length });
+  setStatus('success', 'Always-on app commands enabled. Say “open Notion”, “open Telegram”, or “open Discord”.');
+}
+
+async function stopVoiceCommands() {
+  if (!isTauriRuntime) return;
+  await invoke('stop_windows_command_listener');
+  addDebugEvent('voice_commands_stopped');
+  setStatus('idle', 'Always-on app commands disabled.');
+}
+
+async function handleVoiceCommand(payload: string) {
+  const [phrase, confidence = ''] = payload.split('|');
+  const target = parseVoiceCommandTarget(phrase || '');
+  addDebugEvent('voice_command_detected', { phrase, confidence, target });
+  if (!target) return;
+  try {
+    await invoke('open_voice_target', { target });
+    setStatus('success', `Opened ${providerFriendlyTarget(target)}${confidence ? ` · confidence ${confidence}` : ''}.`);
+  } catch (error) {
+    setStatus('error', String(error));
+  }
+}
+
+function parseVoiceCommandTarget(phrase: string) {
+  const normalized = phrase.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const target of voiceCommandTargets) {
+    if (normalized === `open ${target}` || normalized === `${target} open` || normalized === `launch ${target}` || normalized === `start ${target}`) {
+      return target === 'twitter' ? 'x' : target;
+    }
+  }
+  return '';
+}
+
+function providerFriendlyTarget(target: string) {
+  if (target === 'x') return 'X';
+  if (target === 'gmail') return 'Gmail';
+  if (target === 'github') return 'GitHub';
+  return target.charAt(0).toUpperCase() + target.slice(1);
 }
 
 async function startVoiceTrigger() {
@@ -2097,6 +2217,168 @@ async function transcribeAudioBytes(audioBytes: number[]) {
   const correctedText = applyTranscriptCorrections(rawText);
   if (correctedText !== rawText) addDebugEvent('transcript_corrections_applied', { before: rawText, after: correctedText });
   return correctedText;
+}
+
+async function toggleMeetingRecording() {
+  if (meetingRecorder && meetingRecorder.state === 'recording') {
+    meetingRecorder.stop();
+    return;
+  }
+
+  if (!activeTranscriptionKey()) {
+    setMeetingStatus(`Add your ${providerLabel()} API key before starting a meeting.`);
+    setStatus('error', `Add your ${providerLabel()} API key first.`);
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = pickMimeType();
+    meetingChunks = [];
+    meetingStartedAt = Date.now();
+    meetingRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    meetingRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) meetingChunks.push(event.data);
+    };
+    meetingRecorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+      finishMeetingRecording();
+    };
+    meetingRecorder.start(1000);
+    meetingToggleButton.innerHTML = '<span class="button-dot"></span>Stop meeting';
+    meetingToggleButton.classList.add('recording');
+    setMeetingStatus(`Recording meeting… will transcribe with ${providerLabel()} after stop.`);
+    updateMeetingTimer();
+    meetingTimer = window.setInterval(updateMeetingTimer, 1000);
+    setStatus('recording', 'Meeting recording started.');
+  } catch (error) {
+    setMeetingStatus(String(error));
+    setStatus('error', String(error));
+  }
+}
+
+async function finishMeetingRecording() {
+  const durationMs = meetingStartedAt ? Math.max(1000, Date.now() - meetingStartedAt) : 0;
+  window.clearInterval(meetingTimer);
+  meetingTimer = 0;
+  meetingToggleButton.innerHTML = '<span class="button-dot"></span>Start meeting';
+  meetingToggleButton.classList.remove('recording');
+  updateMeetingTimer(durationMs);
+
+  try {
+    if (!meetingChunks.length) throw new Error('Meeting recording captured no audio.');
+    setMeetingStatus(`Transcribing ${formatDuration(durationMs)} with ${providerLabel()}…`);
+    setStatus('working', 'Transcribing meeting…');
+    const blob = new Blob(meetingChunks, { type: 'audio/webm' });
+    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    const transcript = await transcribeAudioBytes(bytes);
+    const record: MeetingRecord = {
+      id: crypto.randomUUID(),
+      title: meetingTitleInput.value.trim() || `Meeting ${new Date().toLocaleString()}`,
+      createdAt: new Date().toISOString(),
+      durationMs,
+      provider: transcriptionProvider,
+      transcript,
+    };
+    meetingRecords = [record, ...meetingRecords].slice(0, 30);
+    saveMeetings();
+    renderMeetings();
+    meetingTitleInput.value = '';
+    setMeetingStatus(`Saved transcript: ${wordCount(transcript)} words · ${formatDuration(durationMs)}.`);
+    setStatus('success', 'Meeting transcript saved.');
+  } catch (error) {
+    setMeetingStatus(String(error));
+    setStatus('error', String(error));
+  } finally {
+    meetingRecorder = null;
+    meetingChunks = [];
+    meetingStartedAt = 0;
+  }
+}
+
+function setMeetingStatus(message: string) {
+  meetingStatusEl.textContent = message;
+}
+
+function updateMeetingTimer(forcedDurationMs?: number) {
+  const durationMs = forcedDurationMs ?? (meetingStartedAt ? Date.now() - meetingStartedAt : 0);
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  meetingTimerEl.textContent = hours
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function loadMeetings(): MeetingRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(MEETINGS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveMeetings() {
+  localStorage.setItem(MEETINGS_KEY, JSON.stringify(meetingRecords.slice(0, 30)));
+}
+
+function renderMeetings() {
+  if (!meetingRecords.length) {
+    meetingList.innerHTML = '<div class="empty-state">No meeting transcripts yet. Start a meeting and the transcript will appear here.</div>';
+    return;
+  }
+
+  meetingList.innerHTML = meetingRecords.map((item) => `
+    <article class="history-item" data-meeting-id="${item.id}">
+      <div class="history-meta">
+        <time>${formatDate(item.createdAt)}</time>
+        <span>${escapeHtml(providerName(item.provider))}</span>
+        <span>${formatDuration(item.durationMs)}</span>
+        <span>${wordCount(item.transcript)} words</span>
+      </div>
+      <div class="history-body">
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.transcript)}</p>
+      </div>
+      <div class="history-actions">
+        <button data-meeting-action="copy" type="button">Copy</button>
+        <button data-meeting-action="download" type="button">Download MD</button>
+      </div>
+    </article>
+  `).join('');
+
+  meetingList.querySelectorAll<HTMLButtonElement>('[data-meeting-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const container = button.closest<HTMLElement>('[data-meeting-id]');
+      const item = meetingRecords.find((entry) => entry.id === container?.dataset.meetingId);
+      if (!item) return;
+      if (button.dataset.meetingAction === 'copy') {
+        await navigator.clipboard.writeText(item.transcript);
+        setStatus('success', 'Meeting transcript copied.');
+      } else {
+        downloadMeetingMarkdown(item);
+      }
+    });
+  });
+}
+
+function downloadMeetingMarkdown(item: MeetingRecord) {
+  const markdown = `# ${item.title}\n\n- Date: ${formatDate(item.createdAt)}\n- Provider: ${providerName(item.provider)}\n- Duration: ${formatDuration(item.durationMs)}\n- Words: ${wordCount(item.transcript)}\n\n## Transcript\n\n${item.transcript}\n`;
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${slugify(item.title)}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setStatus('success', 'Meeting markdown downloaded.');
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'meeting-transcript';
 }
 
 function glossaryTerms() {

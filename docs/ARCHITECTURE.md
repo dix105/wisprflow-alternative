@@ -26,3 +26,21 @@
 - Per-recording WPM is calculated from transcript word count and recording duration.
 - The Home stats strip renders total words spoken, average WPM, and average words per recording.
 - Scratchpad history shows word count, WPM, and recording duration per new transcript.
+
+
+## Meeting transcription
+
+- `src/main.ts` includes a Meeting view for long-form recording.
+- Meeting mode uses the existing `transcribe_audio` Tauri command, so the active provider can be Groq, ElevenLabs, Sarvam, or Deepgram.
+- Meeting records are stored locally under `flowDeskMeetings` with `id`, `title`, `createdAt`, `durationMs`, `provider`, and `transcript`.
+- Meeting transcripts can be copied or exported as Markdown from the Meeting view.
+- Sarvam Hindi/manual sample testing helper: `SARVAM_API_KEY=... node scripts/test-sarvam-hindi-sample.mjs <audio-file> [expected.txt]`.
+
+## Always-on app voice commands
+
+- Optional setting: `flowDeskVoiceCommands`.
+- Windows desktop mode starts a native `System.Speech` grammar listener through `start_windows_command_listener`.
+- It listens for exact fast commands like `open notion`, `open telegram`, `open discord`, `open x`, `open whatsapp`, `open gmail`, `open github`, and `open chrome`.
+- Recognized commands emit `voice-command-detected`; the frontend calls `open_voice_target`.
+- `open_voice_target` maps known targets to app schemes or web URLs and opens them via OS shell.
+- This path intentionally does not use an LLM for the core open-app commands; exact grammar is faster and safer. Cerebras/GPT-OSS can be layered later for fuzzy commands like “open my notes app” or “message Harshil on Telegram”.
