@@ -128,6 +128,7 @@ let streamingSendPromises: Promise<void>[] = [];
 let streamingSocketOpened = false;
 let streamingSocketFailed = false;
 let streamingPastedLive = false;
+let pendingVoiceCommand: VoiceCommandDecision | null = null;
 let debugEvents: { time: string; label: string; data?: unknown }[] = [];
 let pushToTalkListenersReady = false;
 let waveformContext: AudioContext | null = null;
@@ -1387,7 +1388,14 @@ async function setupPushToTalkListeners() {
 const voiceCommandTargets = ['notion', 'telegram', 'discord', 'x', 'twitter', 'whatsapp', 'gmail', 'calendar', 'github', 'chrome', 'word', 'microsoft word', 'excel', 'powerpoint', 'vscode', 'vs code'] as const;
 
 function voiceCommandPhrases() {
-  return voiceCommandTargets.flatMap((target) => [
+  return [
+    'okay',
+    'ok',
+    'confirm',
+    'yes',
+    'cancel',
+    'no',
+    ...voiceCommandTargets.flatMap((target) => [
     `open ${target}`,
     `${target} open`,
     `launch ${target}`,
@@ -1396,7 +1404,8 @@ function voiceCommandPhrases() {
     `${target} close`,
     `quit ${target}`,
     `stop ${target}`,
-  ]);
+    ]),
+  ];
 }
 
 async function startVoiceCommands() {
@@ -1419,6 +1428,21 @@ async function stopVoiceCommands() {
 
 async function handleVoiceCommand(payload: string) {
   const [phrase, confidence = ''] = payload.split('|');
+  if (pendingVoiceCommand && isConfirmationPhrase(phrase || '')) {
+    const decision = pendingVoiceCommand;
+    pendingVoiceCommand = null;
+    await executeVoiceCommandDecision(decision, confidence);
+    return;
+  }
+  if (pendingVoiceCommand && isCancelPhrase(phrase || '')) {
+    const cancelled = pendingVoiceCommand;
+    pendingVoiceCommand = null;
+    addDebugEvent('voice_command_cancelled', cancelled);
+    setStatus('idle', `Cancelled ${cancelled.action} ${providerFriendlyTarget(cancelled.target)}.`);
+    await speakCommandPreview('Cancelled.');
+    return;
+  }
+
   let decision = parseVoiceCommandDecision(phrase || '');
   addDebugEvent('voice_command_detected', { phrase, confidence, decision });
   if (decision.action === 'none' && aiVoiceCommandsEnabled) {
@@ -1426,12 +1450,39 @@ async function handleVoiceCommand(payload: string) {
     addDebugEvent('voice_command_ai_decision', decision);
   }
   if (decision.action === 'none' || !decision.target) return;
+  pendingVoiceCommand = decision;
+  const preview = `I will ${decision.action} ${providerFriendlyTarget(decision.target)}. Say okay to confirm, or cancel.`;
+  setStatus('working', preview);
+  await speakCommandPreview(preview);
+}
+
+async function executeVoiceCommandDecision(decision: VoiceCommandDecision, confidence = '') {
   try {
     if (decision.action === 'open') await invoke('open_voice_target', { target: decision.target });
     else await invoke('close_voice_target', { target: decision.target });
     setStatus('success', `${decision.action === 'open' ? 'Opened' : 'Closed'} ${providerFriendlyTarget(decision.target)}${confidence ? ` · confidence ${confidence}` : ''}.`);
   } catch (error) {
     setStatus('error', String(error));
+  }
+}
+
+function isConfirmationPhrase(phrase: string) {
+  return /^(ok|okay|confirm|yes|yeah|yep|do it|go ahead)$/i.test(phrase.trim());
+}
+
+function isCancelPhrase(phrase: string) {
+  return /^(cancel|no|nope|stop|don't|do not)$/i.test(phrase.trim());
+}
+
+async function speakCommandPreview(text: string) {
+  const key = sarvamApiKeyInput.value.trim();
+  if (!key || !isTauriRuntime) return;
+  try {
+    const base64Audio = await invoke<string>('sarvam_text_to_speech', { apiKey: key, text });
+    const audio = new Audio(`data:audio/wav;base64,${base64Audio}`);
+    await audio.play();
+  } catch (error) {
+    addDebugEvent('sarvam_tts_failed', String(error));
   }
 }
 

@@ -121,6 +121,11 @@ struct SarvamTranscription {
 }
 
 #[derive(Debug, Deserialize)]
+struct SarvamTtsResponse {
+    audios: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct DeepgramResponse {
     results: DeepgramResults,
 }
@@ -867,6 +872,49 @@ async fn transcribe_with_sarvam(api_key: String, audio_bytes: Vec<u8>) -> Result
     Ok(text)
 }
 
+#[tauri::command]
+async fn sarvam_text_to_speech(api_key: String, text: String) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Missing Sarvam API key".into());
+    }
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("Nothing to speak".into());
+    }
+
+    let body = serde_json::json!({
+        "text": text,
+        "target_language_code": "en-IN",
+        "speaker": "shubh",
+        "model": "bulbul:v3"
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.sarvam.ai/text-to-speech")
+        .header("api-subscription-key", api_key.trim())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Sarvam TTS request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Sarvam TTS API error {status}: {body}"));
+    }
+
+    let tts: SarvamTtsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse Sarvam TTS response: {e}"))?;
+    let audio = tts.audios.join("");
+    if audio.is_empty() {
+        return Err("Sarvam returned no TTS audio".into());
+    }
+    Ok(audio)
+}
+
 async fn transcribe_with_deepgram(api_key: String, audio_bytes: Vec<u8>) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Err("Missing Deepgram API key".into());
@@ -1392,23 +1440,30 @@ fn paste_transcript(text: String) -> Result<(), String> {
 #[tauri::command]
 fn open_voice_target(target: String) -> Result<(), String> {
     let target = normalize_voice_target(&target);
-    let destination = match target.as_str() {
-        "notion" => "notion://www.notion.so",
-        "telegram" => "tg://",
-        "discord" => "discord://",
-        "x" | "twitter" => "https://x.com",
-        "whatsapp" => "whatsapp://",
-        "chrome" => "https://www.google.com",
-        "gmail" => "https://mail.google.com",
-        "calendar" => "https://calendar.google.com",
-        "github" => "https://github.com",
-        "word" => "winword",
-        "excel" => "excel",
-        "powerpoint" => "powerpnt",
-        "vscode" => "code",
+    let destinations: &[&str] = match target.as_str() {
+        "notion" => &["notion://www.notion.so", "https://www.notion.so"],
+        "telegram" => &["tg://", "https://web.telegram.org"],
+        "discord" => &["discord://", "https://discord.com/app"],
+        "x" | "twitter" => &["https://x.com"],
+        "whatsapp" => &["whatsapp://", "https://web.whatsapp.com"],
+        "chrome" => &["https://www.google.com"],
+        "gmail" => &["https://mail.google.com"],
+        "calendar" => &["https://calendar.google.com"],
+        "github" => &["https://github.com"],
+        "word" => &["winword", "https://www.office.com/launch/word"],
+        "excel" => &["excel", "https://www.office.com/launch/excel"],
+        "powerpoint" => &["powerpnt", "https://www.office.com/launch/powerpoint"],
+        "vscode" => &["code", "https://vscode.dev"],
         _ => return Err(format!("Unknown voice target: {target}")),
     };
-    open_destination(destination)
+    let mut last_error = String::new();
+    for destination in destinations {
+        match open_destination(destination) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(if last_error.is_empty() { format!("Could not open {target}") } else { last_error })
 }
 
 #[tauri::command]
@@ -1730,6 +1785,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             transcribe_audio,
             transcribe_and_paste,
+            sarvam_text_to_speech,
             rewrite_text,
             paste_transcript,
             open_voice_target,

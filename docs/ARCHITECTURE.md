@@ -54,3 +54,11 @@
 - The model must return JSON: `{ "action": "open|close|none", "target": "...", "confidence": 0-1, "reason": "..." }`.
 - The app only acts when confidence is at least `0.65`.
 - Close commands are deliberately limited to known mapped desktop apps on Windows.
+
+### Sarvam TTS confirmation and web fallbacks
+
+- Voice commands now use a confirmation step before execution.
+- After a valid command decision, the frontend calls `sarvam_text_to_speech` and plays: “I will <action> <target>. Say okay to confirm, or cancel.”
+- Saying `okay`, `confirm`, or `yes` executes the pending command; saying `cancel` or `no` clears it.
+- `sarvam_text_to_speech` uses Sarvam Bulbul v3 via `https://api.sarvam.ai/text-to-speech` and returns base64 WAV audio.
+- Web-capable targets have fallbacks. Examples: WhatsApp falls back to `https://web.whatsapp.com`, Discord to `https://discord.com/app`, Telegram to `https://web.telegram.org`, VS Code to `https://vscode.dev`, and Office apps to Office web launch URLs.
