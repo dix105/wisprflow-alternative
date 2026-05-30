@@ -69,3 +69,10 @@
 - If no installed app is found, it uses a small fallback catalog for common web-capable apps.
 - If GPT-OSS returns a clear bare domain target, the resolver can open it as `https://<domain>` without adding a hardcoded entry.
 - This keeps the manual list small: aliases/fallbacks are seeds, while installed app shortcuts and GPT target names cover the long tail.
+
+### Voice listener watchdog
+
+- The frontend starts a 30-second watchdog when always-on app commands are enabled.
+- The watchdog calls `is_windows_command_listener_running` to check whether the native Windows Speech PowerShell listener is still alive.
+- If the listener has exited, the frontend automatically restarts it with the current command phrase list.
+- This addresses cases where the listener silently dies or stops responding after the app has been running for a while.

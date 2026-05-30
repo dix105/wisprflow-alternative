@@ -107,6 +107,7 @@ let autoPolishEnabled = localStorage.getItem(AUTO_POLISH_KEY) === 'true';
 let voiceTriggerEnabled = localStorage.getItem(VOICE_TRIGGER_KEY) === 'true';
 let voiceCommandsEnabled = localStorage.getItem(VOICE_COMMANDS_KEY) === 'true';
 let aiVoiceCommandsEnabled = localStorage.getItem(AI_VOICE_COMMANDS_KEY) === 'true';
+let voiceCommandWatchdog = 0;
 let voiceTriggerEngine = (localStorage.getItem(VOICE_TRIGGER_ENGINE_KEY) as VoiceTriggerEngine) || 'openwakeword';
 let voiceTriggerPhrase = localStorage.getItem(VOICE_TRIGGER_PHRASE_KEY) || 'start typing';
 let voiceStopPhrase = localStorage.getItem(VOICE_STOP_PHRASE_KEY) || 'stop typing';
@@ -1414,15 +1415,41 @@ async function startVoiceCommands() {
   }
   await setupPushToTalkListeners();
   await invoke('start_windows_command_listener', { commands: voiceCommandPhrases() });
+  startVoiceCommandWatchdog();
   addDebugEvent('voice_commands_started', { commands: voiceCommandPhrases().length });
   setStatus('success', 'Always-on app commands enabled. Exact commands are instant; GPT-OSS can resolve custom app/site names.');
 }
 
 async function stopVoiceCommands() {
   if (!isTauriRuntime) return;
+  stopVoiceCommandWatchdog();
   await invoke('stop_windows_command_listener');
   addDebugEvent('voice_commands_stopped');
   setStatus('idle', 'Always-on app commands disabled.');
+}
+
+function startVoiceCommandWatchdog() {
+  stopVoiceCommandWatchdog();
+  voiceCommandWatchdog = window.setInterval(checkVoiceCommandListenerHealth, 30000);
+}
+
+function stopVoiceCommandWatchdog() {
+  if (!voiceCommandWatchdog) return;
+  window.clearInterval(voiceCommandWatchdog);
+  voiceCommandWatchdog = 0;
+}
+
+async function checkVoiceCommandListenerHealth() {
+  if (!voiceCommandsEnabled || !isTauriRuntime) return;
+  try {
+    const running = await invoke<boolean>('is_windows_command_listener_running');
+    if (running) return;
+    addDebugEvent('voice_commands_watchdog_restart');
+    await invoke('start_windows_command_listener', { commands: voiceCommandPhrases() });
+    setStatus('success', 'Voice command listener restarted automatically.');
+  } catch (error) {
+    addDebugEvent('voice_commands_watchdog_error', String(error));
+  }
 }
 
 async function handleVoiceCommand(payload: string) {

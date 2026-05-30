@@ -597,6 +597,33 @@ fn stop_windows_command_listener() -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn is_windows_command_listener_running() -> Result<bool, String> {
+    #[cfg(not(windows))]
+    {
+        return Ok(false);
+    }
+
+    #[cfg(windows)]
+    {
+    let listener = WINDOWS_COMMAND_LISTENER.get_or_init(|| Mutex::new(None));
+    let mut guard = listener.lock().map_err(|_| "Windows command listener lock failed".to_string())?;
+    let Some(state) = guard.as_mut() else {
+        return Ok(false);
+    };
+
+    match state.child.try_wait() {
+        Ok(Some(_status)) => {
+            let _ = state.child.wait();
+            *guard = None;
+            Ok(false)
+        }
+        Ok(None) => Ok(true),
+        Err(error) => Err(format!("Could not check Windows command listener: {error}")),
+    }
+    }
+}
+
 #[cfg(windows)]
 fn run_wake_word_listener(
     app: tauri::AppHandle,
@@ -1920,6 +1947,7 @@ pub fn run() {
             stop_windows_speech_listener,
             start_windows_command_listener,
             stop_windows_command_listener,
+            is_windows_command_listener_running,
             start_native_recording,
             stop_native_recording,
             start_audio_ducking,
