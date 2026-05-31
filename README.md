@@ -262,6 +262,29 @@ cd src-tauri
 cargo check
 ```
 
+### macOS test build
+
+Build the Mac app on a Mac machine:
+
+```bash
+npm install
+npm run tauri:build -- --bundles app,dmg
+```
+
+The `.app` and `.dmg` outputs will be under:
+
+```txt
+src-tauri/target/release/bundle/
+```
+
+For dictation + paste on macOS, grant FlowDesk:
+
+- Microphone access when macOS prompts
+- Accessibility access in System Settings → Privacy & Security → Accessibility
+- Automation access if macOS asks to control System Events
+
+Mac support currently uses the Tauri global shortcut plugin in toggle mode plus WebView microphone capture. Cross-app paste and selected-text polish use macOS System Events, so Accessibility permission is required.
+
 ## App setup
 
 1. Open Deskflow.
@@ -318,7 +341,7 @@ wisprflow-alternative
 Current product name:
 
 ```txt
-Deskflow
+FlowDesk
 ```
 
 ## Recommended next improvements

@@ -1343,6 +1343,13 @@ fn send_media_play_pause() {
         keybd_event(VK_MEDIA_PLAY_PAUSE.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
         keybd_event(VK_MEDIA_PLAY_PAUSE.0 as u8, 0, KEYEVENTF_KEYUP, 0);
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("osascript")
+            .args(["-e", "tell application \"System Events\" to key code 100"])
+            .status();
+    }
 }
 
 #[tauri::command]
@@ -1437,7 +1444,12 @@ fn copy_selected_text() -> Result<String, String> {
 }
 
 fn send_ctrl_c() {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        send_macos_command_keystroke("c");
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         return;
     }
@@ -1524,10 +1536,38 @@ fn open_installed_app(target: &str) -> Result<(), String> {
         Err(format!("No installed app found for {target}"))
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let app_name = macos_app_name_for_target(target).unwrap_or(target);
+        std::process::Command::new("open")
+            .args(["-a", app_name])
+            .status()
+            .map_err(|e| format!("Could not open {app_name}: {e}"))?
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("No installed app found for {target}"))
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         let _ = target;
-        Err("Installed app discovery is only implemented on Windows right now".into())
+        Err("Installed app discovery is only implemented on Windows and macOS right now".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_app_name_for_target(target: &str) -> Option<&'static str> {
+    match target {
+        "notion" => Some("Notion"),
+        "telegram" => Some("Telegram"),
+        "discord" => Some("Discord"),
+        "whatsapp" => Some("WhatsApp"),
+        "chrome" => Some("Google Chrome"),
+        "word" => Some("Microsoft Word"),
+        "excel" => Some("Microsoft Excel"),
+        "powerpoint" => Some("Microsoft PowerPoint"),
+        "vscode" => Some("Visual Studio Code"),
+        _ => None,
     }
 }
 
@@ -1638,8 +1678,24 @@ fn close_voice_target(target: String) -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
-        let _ = target;
-        Err("Close voice commands are only mapped on Windows right now".into())
+        #[cfg(target_os = "macos")]
+        {
+            let app_name = macos_app_name_for_target(&target).unwrap_or(&target);
+            let script = format!("tell application \"{app_name}\" to quit");
+            return std::process::Command::new("osascript")
+                .args(["-e", &script])
+                .status()
+                .map_err(|e| format!("Could not close {app_name}: {e}"))?
+                .success()
+                .then_some(())
+                .ok_or_else(|| format!("Close command failed for {target}"));
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = target;
+            Err("Close voice commands are only mapped on Windows and macOS right now".into())
+        }
     }
 }
 
@@ -1762,7 +1818,12 @@ fn paste_text(text: &str) -> Result<(), String> {
 }
 
 fn send_ctrl_v() {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        send_macos_command_keystroke("v");
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         return;
     }
@@ -1786,6 +1847,14 @@ fn send_ctrl_v() {
         keybd_event(VK_CONTROL.0 as u8, 0, KEYEVENTF_KEYUP, 0);
     }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn send_macos_command_keystroke(key: &str) {
+    let script = format!("tell application \"System Events\" to keystroke \"{key}\" using command down");
+    let _ = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .status();
 }
 
 // --------------- File-system transcript persistence ---------------
