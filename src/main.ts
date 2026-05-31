@@ -131,6 +131,8 @@ let streamingSocketFailed = false;
 let streamingPastedLive = false;
 let debugEvents: { time: string; label: string; data?: unknown }[] = [];
 let pushToTalkListenersReady = false;
+let browserVoiceRecognition: any = null;
+let browserVoiceRestartTimer = 0;
 let waveformContext: AudioContext | null = null;
 let waveformAnalyser: AnalyserNode | null = null;
 let soundContext: AudioContext | null = null;
@@ -1412,16 +1414,10 @@ function voiceCommandPhrases() {
 
 async function startVoiceCommands() {
   if (!isTauriRuntime) {
-    setStatus('idle', 'Always-on voice commands run inside the desktop app.');
-    return;
+    return startBrowserVoiceCommands();
   }
   if (!isWindowsDesktop) {
-    voiceCommandsEnabled = false;
-    voiceCommandsInput.checked = false;
-    localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
-    setStatus('idle', 'Always-on voice commands are Windows-only right now. Mac dictation shortcuts still work.');
-    addDebugEvent('voice_commands_skipped_non_windows');
-    return;
+    return startBrowserVoiceCommands();
   }
   await setupPushToTalkListeners();
   await invoke('start_windows_command_listener', { commands: voiceCommandPhrases() });
@@ -1431,10 +1427,10 @@ async function startVoiceCommands() {
 }
 
 async function stopVoiceCommands() {
+  stopBrowserVoiceCommands();
   if (!isTauriRuntime) return;
   stopVoiceCommandWatchdog();
   if (!isWindowsDesktop) {
-    addDebugEvent('voice_commands_stop_skipped_non_windows');
     setStatus('idle', 'Always-on app commands disabled.');
     return;
   }
@@ -1464,6 +1460,85 @@ async function checkVoiceCommandListenerHealth() {
     setStatus('success', 'Voice command listener restarted automatically.');
   } catch (error) {
     addDebugEvent('voice_commands_watchdog_error', String(error));
+  }
+}
+
+async function startBrowserVoiceCommands() {
+  const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognitionCtor) {
+    voiceCommandsEnabled = false;
+    voiceCommandsInput.checked = false;
+    localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
+    setStatus('error', 'Always-on voice commands need Web Speech support on Mac. This WebView does not expose it yet.');
+    addDebugEvent('browser_voice_commands_unavailable');
+    return;
+  }
+
+  stopBrowserVoiceCommands();
+  await setupPushToTalkListeners();
+
+  const recognition = new SpeechRecognitionCtor();
+  browserVoiceRecognition = recognition;
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = (event: any) => {
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      if (!result?.isFinal) continue;
+      const phrase = String(result[0]?.transcript || '').trim();
+      if (!phrase) continue;
+      addDebugEvent('browser_voice_command_detected', { phrase, confidence: result[0]?.confidence });
+      handleVoiceCommand(`${phrase}|mac`).catch((error) => addDebugEvent('browser_voice_command_handle_failed', String(error)));
+    }
+  };
+
+  recognition.onerror = (event: any) => {
+    addDebugEvent('browser_voice_commands_error', { error: event?.error || String(event) });
+    if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
+      voiceCommandsEnabled = false;
+      voiceCommandsInput.checked = false;
+      localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
+      setStatus('error', 'Microphone permission blocked always-on voice commands. Allow mic access and enable it again.');
+    }
+  };
+
+  recognition.onend = () => {
+    addDebugEvent('browser_voice_commands_ended');
+    if (!voiceCommandsEnabled || isWindowsDesktop) return;
+    window.clearTimeout(browserVoiceRestartTimer);
+    browserVoiceRestartTimer = window.setTimeout(() => {
+      try {
+        browserVoiceRecognition?.start();
+        addDebugEvent('browser_voice_commands_restarted');
+      } catch (error) {
+        addDebugEvent('browser_voice_commands_restart_failed', String(error));
+      }
+    }, 600);
+  };
+
+  try {
+    recognition.start();
+    addDebugEvent('browser_voice_commands_started');
+    setStatus('success', 'Always-on app commands enabled on Mac. Try “open Notion” or “open Telegram”.');
+  } catch (error) {
+    browserVoiceRecognition = null;
+    setStatus('error', `Could not start Mac always-on voice commands: ${String(error)}`);
+  }
+}
+
+function stopBrowserVoiceCommands() {
+  window.clearTimeout(browserVoiceRestartTimer);
+  browserVoiceRestartTimer = 0;
+  const recognition = browserVoiceRecognition;
+  browserVoiceRecognition = null;
+  if (!recognition) return;
+  try {
+    recognition.onend = null;
+    recognition.stop();
+  } catch (error) {
+    addDebugEvent('browser_voice_commands_stop_failed', String(error));
   }
 }
 
