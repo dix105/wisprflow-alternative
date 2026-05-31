@@ -133,6 +133,10 @@ let debugEvents: { time: string; label: string; data?: unknown }[] = [];
 let pushToTalkListenersReady = false;
 let browserVoiceRecognition: any = null;
 let browserVoiceRestartTimer = 0;
+let browserVoiceMicStream: MediaStream | null = null;
+let browserVoiceSegmentRecorder: MediaRecorder | null = null;
+let browserVoiceSegmentChunks: BlobPart[] = [];
+let browserVoiceAudioLoopActive = false;
 let waveformContext: AudioContext | null = null;
 let waveformAnalyser: AnalyserNode | null = null;
 let soundContext: AudioContext | null = null;
@@ -1500,16 +1504,20 @@ async function startBrowserVoiceCommands() {
   recognition.onerror = (event: any) => {
     addDebugEvent('browser_voice_commands_error', { error: event?.error || String(event) });
     if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
-      voiceCommandsEnabled = false;
-      voiceCommandsInput.checked = false;
-      localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
-      setStatus('error', 'Microphone permission blocked always-on voice commands. Allow mic access and enable it again.');
+      addDebugEvent('browser_voice_commands_speech_recognition_blocked_fallback_audio_loop');
+      browserVoiceRecognition = null;
+      startBrowserAudioCommandLoop().catch((error) => {
+        voiceCommandsEnabled = false;
+        voiceCommandsInput.checked = false;
+        localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
+        setStatus('error', `Mac voice command fallback failed: ${String(error)}`);
+      });
     }
   };
 
   recognition.onend = () => {
     addDebugEvent('browser_voice_commands_ended');
-    if (!voiceCommandsEnabled || isWindowsDesktop) return;
+    if (!voiceCommandsEnabled || isWindowsDesktop || browserVoiceAudioLoopActive) return;
     window.clearTimeout(browserVoiceRestartTimer);
     browserVoiceRestartTimer = window.setTimeout(() => {
       try {
@@ -1557,6 +1565,7 @@ async function requestAlwaysOnMicPermission() {
 function stopBrowserVoiceCommands() {
   window.clearTimeout(browserVoiceRestartTimer);
   browserVoiceRestartTimer = 0;
+  stopBrowserAudioCommandLoop();
   const recognition = browserVoiceRecognition;
   browserVoiceRecognition = null;
   if (!recognition) return;
@@ -1565,6 +1574,87 @@ function stopBrowserVoiceCommands() {
     recognition.stop();
   } catch (error) {
     addDebugEvent('browser_voice_commands_stop_failed', String(error));
+  }
+}
+
+async function startBrowserAudioCommandLoop() {
+  if (browserVoiceAudioLoopActive) return;
+  if (!activeTranscriptionKey()) {
+    throw new Error(`Add your ${providerLabel()} API key first for Mac always-on voice commands.`);
+  }
+  const stream = browserVoiceMicStream || await navigator.mediaDevices.getUserMedia({ audio: true });
+  browserVoiceMicStream = stream;
+  browserVoiceAudioLoopActive = true;
+  addDebugEvent('browser_audio_voice_commands_started', { provider: transcriptionProvider });
+  setStatus('success', `Mac always-on commands enabled with ${providerLabel()} audio fallback. Try “open Notion”.`);
+  recordNextBrowserVoiceCommandSegment();
+}
+
+function stopBrowserAudioCommandLoop() {
+  browserVoiceAudioLoopActive = false;
+  if (browserVoiceSegmentRecorder?.state === 'recording') {
+    try { browserVoiceSegmentRecorder.stop(); } catch {}
+  }
+  browserVoiceSegmentRecorder = null;
+  browserVoiceSegmentChunks = [];
+  browserVoiceMicStream?.getTracks().forEach((track) => track.stop());
+  browserVoiceMicStream = null;
+  addDebugEvent('browser_audio_voice_commands_stopped');
+}
+
+function recordNextBrowserVoiceCommandSegment() {
+  if (!browserVoiceAudioLoopActive || !browserVoiceMicStream) return;
+  if (!activeTranscriptionKey()) {
+    stopBrowserAudioCommandLoop();
+    voiceCommandsEnabled = false;
+    voiceCommandsInput.checked = false;
+    localStorage.setItem(VOICE_COMMANDS_KEY, 'false');
+    setStatus('error', `Add your ${providerLabel()} API key first for Mac always-on voice commands.`);
+    return;
+  }
+
+  const mimeType = pickMimeType();
+  browserVoiceSegmentChunks = [];
+  const segmentRecorder = new MediaRecorder(browserVoiceMicStream, mimeType ? { mimeType } : undefined);
+  browserVoiceSegmentRecorder = segmentRecorder;
+
+  segmentRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) browserVoiceSegmentChunks.push(event.data);
+  };
+
+  segmentRecorder.onstop = async () => {
+    if (!browserVoiceAudioLoopActive) return;
+    try {
+      const chunksSnapshot = browserVoiceSegmentChunks.slice();
+      browserVoiceSegmentChunks = [];
+      if (chunksSnapshot.length) {
+        const blob = new Blob(chunksSnapshot, { type: mimeType || 'audio/webm' });
+        if (blob.size > 1200) {
+          const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+          const text = (await transcribeAudioBytes(bytes)).trim();
+          if (text) {
+            addDebugEvent('browser_audio_voice_command_transcript', { text });
+            await handleVoiceCommand(`${text}|mac-audio`);
+          }
+        }
+      }
+    } catch (error) {
+      addDebugEvent('browser_audio_voice_command_segment_failed', String(error));
+    } finally {
+      browserVoiceSegmentRecorder = null;
+      if (browserVoiceAudioLoopActive) window.setTimeout(recordNextBrowserVoiceCommandSegment, 250);
+    }
+  };
+
+  try {
+    segmentRecorder.start();
+    window.setTimeout(() => {
+      if (segmentRecorder.state === 'recording') segmentRecorder.stop();
+    }, 3500);
+  } catch (error) {
+    addDebugEvent('browser_audio_voice_command_recorder_start_failed', String(error));
+    stopBrowserAudioCommandLoop();
+    setStatus('error', `Could not start Mac audio command listener: ${String(error)}`);
   }
 }
 
