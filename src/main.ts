@@ -1662,7 +1662,7 @@ async function handleVoiceCommand(payload: string) {
   const [phrase, confidence = ''] = payload.split('|');
   let decision = parseVoiceCommandDecision(phrase || '');
   addDebugEvent('voice_command_detected', { phrase, confidence, decision });
-  if (decision.action === 'none' && aiVoiceCommandsEnabled) {
+  if (decision.action === 'none' && aiVoiceCommandsEnabled && shouldUseAiVoiceCommandFallback(phrase || '')) {
     decision = await classifyVoiceCommandWithGptOss(phrase || '');
     addDebugEvent('voice_command_ai_decision', decision);
   }
@@ -1697,6 +1697,15 @@ async function speakCommandPreview(text: string) {
 
 function parseVoiceCommandDecision(phrase: string): VoiceCommandDecision {
   const normalized = phrase.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  const commandMatch = normalized.match(/^(open|launch|start|close|quit|stop)\s+(.+)$/) || normalized.match(/^(.+)\s+(open|close|quit|stop)$/);
+  if (commandMatch) {
+    const actionWord = ['open', 'launch', 'start', 'close', 'quit', 'stop'].includes(commandMatch[1]) ? commandMatch[1] : commandMatch[2];
+    const rawTarget = ['open', 'launch', 'start', 'close', 'quit', 'stop'].includes(commandMatch[1]) ? commandMatch[2] : commandMatch[1];
+    const action: VoiceCommandAction = ['close', 'quit', 'stop'].includes(actionWord) ? 'close' : 'open';
+    const target = resolveVoiceCommandTarget(rawTarget);
+    if (target) return { action, target, confidence: 0.9, reason: 'local fuzzy grammar match' };
+  }
+
   for (const target of voiceCommandTargets) {
     const normalizedTarget = normalizeVoiceCommandTarget(target);
     if (normalized === `open ${target}` || normalized === `${target} open` || normalized === `launch ${target}` || normalized === `start ${target}`) {
@@ -1707,6 +1716,45 @@ function parseVoiceCommandDecision(phrase: string): VoiceCommandDecision {
     }
   }
   return { action: 'none', target: '', confidence: 0, reason: 'no exact match' };
+}
+
+function resolveVoiceCommandTarget(rawTarget: string) {
+  const normalized = normalizeVoiceCommandTarget(rawTarget.trim().toLowerCase());
+  const compact = normalized.replace(/[^a-z0-9.]/g, '');
+  const aliases: Record<string, string> = {
+    motion: 'notion',
+    notionapp: 'notion',
+    ocean: 'notion',
+    potion: 'notion',
+    telegramapp: 'telegram',
+    telegraph: 'telegram',
+    chromeapp: 'chrome',
+    googlechrome: 'chrome',
+    crom: 'chrome',
+    grown: 'chrome',
+    discordapp: 'discord',
+    whatsap: 'whatsapp',
+    whatsappa: 'whatsapp',
+    mail: 'gmail',
+    googlemail: 'gmail',
+    git: 'github',
+    gitup: 'github',
+    code: 'vscode',
+    visualstudiocode: 'vscode',
+  };
+  if (aliases[compact]) return aliases[compact];
+  const normalizedTargets = voiceCommandTargets.map((target) => normalizeVoiceCommandTarget(target));
+  if (normalizedTargets.includes(normalized as typeof normalizedTargets[number])) return normalized;
+  if (compact.includes('.')) return compact;
+  return '';
+}
+
+function shouldUseAiVoiceCommandFallback(phrase: string) {
+  const normalized = phrase.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalized || normalized.length < 5) return false;
+  if (/^(thank you|thanks|see you|i'm sorry|sorry|okay|ok|yes|no|cancel|confirm)\b/.test(normalized)) return false;
+  if (!/^(open|launch|start|close|quit|stop)\b/.test(normalized) && !/\b(open|close|quit|stop)$/.test(normalized)) return false;
+  return true;
 }
 
 async function classifyVoiceCommandWithGptOss(phrase: string): Promise<VoiceCommandDecision> {
@@ -1720,7 +1768,7 @@ async function classifyVoiceCommandWithGptOss(phrase: string): Promise<VoiceComm
     if (decision.confidence < 0.65) return { action: 'none', target: '', confidence: decision.confidence, reason: `low confidence: ${decision.reason}` };
     return decision;
   } catch (error) {
-    setStatus('error', String(error));
+    addDebugEvent('voice_command_ai_error', String(error));
     return { action: 'none', target: '', confidence: 0, reason: String(error) };
   }
 }
