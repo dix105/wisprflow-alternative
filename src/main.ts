@@ -26,6 +26,8 @@ const POLISH_SHORTCUT_KEY = 'flowDeskPolishShortcut';
 const AUTO_POLISH_KEY = 'flowDeskAutoPolish';
 const VOICE_TRIGGER_KEY = 'flowDeskVoiceTrigger';
 const VOICE_COMMANDS_KEY = 'flowDeskVoiceCommands';
+const AI_VOICE_COMMANDS_KEY = 'flowDeskAiVoiceCommands';
+const CEREBRAS_KEY = 'cerebrasApiKey';
 const VOICE_TRIGGER_PHRASE_KEY = 'flowDeskVoiceTriggerPhrase';
 const VOICE_STOP_PHRASE_KEY = 'flowDeskVoiceStopPhrase';
 const VOICE_TRIGGER_ENGINE_KEY = 'flowDeskVoiceTriggerEngine';
@@ -104,6 +106,7 @@ let nativeMicEnabled = localStorage.getItem(NATIVE_MIC_KEY) !== 'false';
 let autoPolishEnabled = localStorage.getItem(AUTO_POLISH_KEY) === 'true';
 let voiceTriggerEnabled = localStorage.getItem(VOICE_TRIGGER_KEY) === 'true';
 let voiceCommandsEnabled = localStorage.getItem(VOICE_COMMANDS_KEY) === 'true';
+let aiVoiceCommandsEnabled = localStorage.getItem(AI_VOICE_COMMANDS_KEY) === 'true' || Boolean(localStorage.getItem(CEREBRAS_KEY));
 let voiceCommandWatchdog = 0;
 let voiceTriggerEngine = (localStorage.getItem(VOICE_TRIGGER_ENGINE_KEY) as VoiceTriggerEngine) || 'openwakeword';
 let voiceTriggerPhrase = localStorage.getItem(VOICE_TRIGGER_PHRASE_KEY) || 'start typing';
@@ -359,7 +362,7 @@ max studio => MaxStudio"></textarea>
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
       <section class="drawer-panel" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-sidebar"><p>SETTINGS</p><button class="active" data-settings-tab="general" type="button">☷ General</button><button data-settings-tab="voice" type="button">◉ Voice trigger</button><button data-settings-tab="audio" type="button">▭ Audio</button></div>
-        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Always-on app commands</strong><span>No shortcut. Say “open Notion”, “open browser”, “open Figma”, “open youtube.com”, or “close Discord”. Unknown open targets try the installed app first, then the website.</span></div><input id="voiceCommands" type="checkbox" /></label><label class="settings-row"><div><strong>Local command parser</strong><span>No GPT-OSS/Cerebras fallback. Commands are handled locally and ignored silently when FlowDesk cannot resolve or open them.</span></div><span class="settings-note">On</span></label><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Beep sound</strong><span>Pick the recording start/stop sound style.</span></div><select id="recordingBeepStyle"><option value="chime">Chime — bright</option><option value="classic">Classic — recorder beep</option><option value="digital">Digital — crisp</option><option value="soft">Soft — gentle</option></select></label><label class="settings-row"><div><strong>Beep volume</strong><span>Recording start/stop sound volume.</span></div><input id="recordingBeepVolume" type="range" min="0" max="100" step="5" /><span id="recordingBeepVolumeValue">55%</span></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test beep</strong><span>Play the selected start and stop beep.</span></div><button id="testRecordingBeep" class="soft-btn" type="button">Play beep</button></div><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
+        <div class="settings-main"><div class="drawer-header"><div><h2 id="settingsTitle">General</h2><p id="settingsSubtitle">Core keys and typing behavior.</p></div><button id="closeSettings" class="icon-btn" type="button">×</button></div><section class="settings-panel active" data-settings-panel="general"><label class="settings-row"><div><strong>Groq API key</strong><span>Used for transcription and rewrites</span></div><input id="drawerApiKey" type="password" autocomplete="off" placeholder="gsk_..." /></label><div class="settings-row"><div><strong>Dictation shortcut</strong><span>Use this from any app.</span></div><button id="captureShortcutMirror" class="soft-btn" type="button"><span id="shortcutValueMirror">Cmd/Ctrl + Alt + Space</span></button><button id="saveMirror" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Dictation mode</strong><span>Hold key, or press once to start and again to stop.</span></div><select id="recordingMode"><option value="hold">Hold to talk</option><option value="toggle">Press once / press again</option></select></label><div class="settings-row"><div><strong>Polish text shortcut</strong><span>Select text anywhere, then polish and paste back</span></div><button id="capturePolishShortcut" class="soft-btn" type="button"><span id="polishShortcutValue">Cmd/Ctrl + Shift + P</span></button><button id="savePolishShortcut" class="soft-btn" type="button">Save</button></div><label class="settings-row"><div><strong>Auto polish dictated text</strong><span>After transcription, polish the text before pasting it into the focused app.</span></div><input id="autoPolish" type="checkbox" /></label><label class="settings-row"><div><strong>Launch app at login</strong><span>Keep FlowDesk ready in the tray</span></div><input id="autostart" type="checkbox" /></label></section><section class="settings-panel" data-settings-panel="voice"><label class="settings-row"><div><strong>Always-on app commands</strong><span>No shortcut. Say “open Notion”, “open browser”, “open Figma”, “open youtube.com”, or “close Discord”. Unknown open targets try the installed app first, then the website.</span></div><input id="voiceCommands" type="checkbox" /></label><label class="settings-row"><div><strong>Cerebras command brain</strong><span>Optional fallback for fuzzy commands like “open my notes app” or “open the design tool”. Local rules still run first.</span></div><input id="aiVoiceCommands" type="checkbox" /></label><label class="settings-row"><div><strong>Cerebras API key</strong><span>Stored locally and used only for voice command intent detection.</span></div><input id="cerebrasApiKey" type="password" autocomplete="off" placeholder="csk_..." /></label><label class="settings-row"><div><strong>Voice trigger</strong><span>Background audio stays on this device. Windows supports custom phrases; Mac/Linux use Alexa.</span></div><input id="voiceTrigger" type="checkbox" /></label><label class="settings-row"><div><strong>Trigger engine</strong><span>Use Windows Speech for custom words on Windows. OpenWakeWord currently supports Alexa.</span></div><select id="voiceTriggerEngine"><option value="openwakeword">OpenWakeWord — Alexa</option><option value="windows">Windows Speech — custom phrase</option></select></label><label class="settings-row"><div><strong>Trigger phrase</strong><span>Works with Windows Speech. For OpenWakeWord, the active word is Alexa.</span></div><input id="voiceTriggerPhrase" type="text" value="start typing" autocomplete="off" /></label><label class="settings-row"><div><strong>Stop phrase</strong><span>Windows Speech only. Stops recording locally, then sends the dictation audio for transcription.</span></div><input id="voiceStopPhrase" type="text" value="stop typing" autocomplete="off" /></label></section><section class="settings-panel" data-settings-panel="audio"><label class="settings-row"><div><strong>Pause background media</strong><span>Pause/resume the current video or music while recording.</span></div><input id="pauseBackgroundMedia" type="checkbox" /></label><label class="settings-row"><div><strong>Fast mic mode</strong><span>Keep the WebView mic warm so recording starts faster.</span></div><input id="fastMic" type="checkbox" /></label><label class="settings-row"><div><strong>Native mic backend</strong><span>Use Windows native audio capture for faster start. Live Deepgram streaming still uses WebView mic.</span></div><input id="nativeMic" type="checkbox" /></label><label class="settings-row"><div><strong>Beep sound</strong><span>Pick the recording start/stop sound style.</span></div><select id="recordingBeepStyle"><option value="chime">Chime — bright</option><option value="classic">Classic — recorder beep</option><option value="digital">Digital — crisp</option><option value="soft">Soft — gentle</option></select></label><label class="settings-row"><div><strong>Beep volume</strong><span>Recording start/stop sound volume.</span></div><input id="recordingBeepVolume" type="range" min="0" max="100" step="5" /><span id="recordingBeepVolumeValue">55%</span></label><label class="settings-row"><div><strong>Audio ducking volume</strong><span>Background volume while recording. Restores as soon as recording stops.</span></div><input id="audioDuckingVolume" type="range" min="0" max="100" step="5" /><span id="audioDuckingVolumeValue">35%</span></label><div class="settings-row"><div><strong>Test beep</strong><span>Play the selected start and stop beep.</span></div><button id="testRecordingBeep" class="soft-btn" type="button">Play beep</button></div><div class="settings-row"><div><strong>Test audio ducking</strong><span>Lowers volume briefly, then restores it automatically.</span></div><button id="testAudioDucking" class="soft-btn" type="button">Run test</button></div></section></div>
       </section>
     </aside>
 
@@ -407,6 +410,8 @@ const autoPolishInput = document.querySelector<HTMLInputElement>('#autoPolish')!
 const fastMicInput = document.querySelector<HTMLInputElement>('#fastMic')!;
 const nativeMicInput = document.querySelector<HTMLInputElement>('#nativeMic')!;
 const voiceCommandsInput = document.querySelector<HTMLInputElement>('#voiceCommands')!;
+const aiVoiceCommandsInput = document.querySelector<HTMLInputElement>('#aiVoiceCommands')!;
+const cerebrasApiKeyInput = document.querySelector<HTMLInputElement>('#cerebrasApiKey')!;
 const voiceTriggerInput = document.querySelector<HTMLInputElement>('#voiceTrigger')!;
 const voiceTriggerEngineInput = document.querySelector<HTMLSelectElement>('#voiceTriggerEngine')!;
 const voiceTriggerPhraseInput = document.querySelector<HTMLInputElement>('#voiceTriggerPhrase')!;
@@ -464,6 +469,8 @@ autoPolishInput.checked = autoPolishEnabled;
 fastMicInput.checked = fastMicEnabled;
 nativeMicInput.checked = nativeMicEnabled;
 voiceCommandsInput.checked = voiceCommandsEnabled;
+aiVoiceCommandsInput.checked = aiVoiceCommandsEnabled;
+cerebrasApiKeyInput.value = localStorage.getItem(CEREBRAS_KEY) || '';
 voiceTriggerInput.checked = voiceTriggerEnabled;
 voiceTriggerEngineInput.value = voiceTriggerEngine;
 voiceTriggerPhraseInput.value = voiceTriggerPhrase;
@@ -524,6 +531,14 @@ voiceCommandsInput.addEventListener('change', async () => {
   localStorage.setItem(VOICE_COMMANDS_KEY, String(voiceCommandsEnabled));
   if (voiceCommandsEnabled) await startVoiceCommands();
   else await stopVoiceCommands();
+});
+aiVoiceCommandsInput.addEventListener('change', () => {
+  aiVoiceCommandsEnabled = aiVoiceCommandsInput.checked;
+  localStorage.setItem(AI_VOICE_COMMANDS_KEY, String(aiVoiceCommandsEnabled));
+  setStatus('success', aiVoiceCommandsEnabled ? 'Cerebras command brain enabled.' : 'Cerebras command brain disabled.');
+});
+cerebrasApiKeyInput.addEventListener('change', () => {
+  localStorage.setItem(CEREBRAS_KEY, cerebrasApiKeyInput.value.trim());
 });
 debugExpectedWordsInput.addEventListener('input', () => localStorage.setItem(DEBUG_EXPECTED_WORDS_KEY, debugExpectedWordsInput.value.trim()));
 copyDebugBundleButton.addEventListener('click', async () => {
@@ -1647,6 +1662,11 @@ async function handleVoiceCommand(payload: string) {
   const [phrase, confidence = ''] = payload.split('|');
   let decision = parseVoiceCommandDecision(phrase || '');
   addDebugEvent('voice_command_detected', { phrase, confidence, decision });
+  if (aiVoiceCommandsEnabled && shouldUseAiVoiceCommandFallback(phrase || '', decision)) {
+    const aiDecision = await classifyVoiceCommandWithCerebras(phrase || '');
+    addDebugEvent('voice_command_ai_decision', aiDecision);
+    if (aiDecision.action !== 'none' && aiDecision.target) decision = aiDecision;
+  }
   if (decision.action === 'none' || !decision.target) {
     if (shouldAskForCommandClarification(phrase || '')) await speakCommandClarification();
     return;
@@ -1683,6 +1703,27 @@ async function speakCommandClarification() {
     await audio.play();
   } catch (error) {
     addDebugEvent('sarvam_clarification_tts_failed', String(error));
+  }
+}
+
+function shouldUseAiVoiceCommandFallback(phrase: string, localDecision: VoiceCommandDecision) {
+  const normalized = phrase.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalized || normalized.length < 5) return false;
+  if (/^(thank you|thanks|see you|i'm sorry|sorry|okay|ok|yes|no|cancel|confirm)\b/.test(normalized)) return false;
+  if (!/\b(open|launch|start|close|quit|stop)\b/.test(normalized)) return false;
+  return localDecision.action === 'none' || localDecision.target.startsWith('search:');
+}
+
+async function classifyVoiceCommandWithCerebras(phrase: string): Promise<VoiceCommandDecision> {
+  const key = cerebrasApiKeyInput.value.trim();
+  if (!key) return { action: 'none', target: '', confidence: 0, reason: 'missing Cerebras key' };
+  try {
+    const decision = await invoke<VoiceCommandDecision>('classify_voice_command', { apiKey: key, text: phrase });
+    if (decision.confidence < 0.65) return { action: 'none', target: '', confidence: decision.confidence, reason: `low confidence: ${decision.reason}` };
+    return decision;
+  } catch (error) {
+    addDebugEvent('voice_command_ai_error', String(error));
+    return { action: 'none', target: '', confidence: 0, reason: String(error) };
   }
 }
 

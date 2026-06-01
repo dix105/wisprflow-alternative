@@ -1750,7 +1750,7 @@ async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCo
 
     let targets = "notion, telegram, discord, x, twitter, whatsapp, chrome, gmail, calendar, github, word, excel, powerpoint, vscode, or a short app/site name such as slack, linear, figma, cursor, claude, youtube, agentplace.sh";
     let body = serde_json::json!({
-        "model": "gpt-oss-120b",
+        "model": "llama3.1-8b",
         "temperature": 0,
         "max_tokens": 120,
         "messages": [
