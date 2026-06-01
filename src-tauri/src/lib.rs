@@ -531,7 +531,11 @@ $grammarBuilder = New-Object System.Speech.Recognition.GrammarBuilder
 $grammarBuilder.Culture = $recognizer.RecognizerInfo.Culture
 [void]$grammarBuilder.Append($choices)
 $grammar = New-Object System.Speech.Recognition.Grammar($grammarBuilder)
+$grammar.Name = 'FlowDesk exact commands'
 $recognizer.LoadGrammar($grammar)
+$dictationGrammar = New-Object System.Speech.Recognition.DictationGrammar
+$dictationGrammar.Name = 'FlowDesk open-ended commands'
+$recognizer.LoadGrammar($dictationGrammar)
 $recognizer.SetInputToDefaultAudioDevice()
 Register-ObjectEvent -InputObject $recognizer -EventName SpeechRecognized -Action {
   if ($EventArgs.Result.Confidence -ge 0.50) {
@@ -1505,21 +1509,42 @@ fn web_fallbacks_for_target(target: &str) -> Vec<String> {
         "discord" => vec!["https://discord.com/app".into()],
         "x" | "twitter" => vec!["https://x.com".into()],
         "whatsapp" => vec!["https://web.whatsapp.com".into()],
-        "chrome" => vec!["https://www.google.com".into()],
+        "chrome" | "browser" => vec!["https://www.google.com".into()],
         "gmail" => vec!["https://mail.google.com".into()],
         "calendar" => vec!["https://calendar.google.com".into()],
         "github" => vec!["https://github.com".into()],
+        "youtube" => vec!["https://youtube.com".into()],
+        "chatgpt" => vec!["https://chatgpt.com".into()],
+        "figma" => vec!["https://figma.com".into()],
+        "linear" => vec!["https://linear.app".into()],
+        "slack" => vec!["https://slack.com".into()],
+        "claude" => vec!["https://claude.ai".into()],
+        "cursor" => vec!["https://cursor.com".into()],
         "word" => vec!["https://www.office.com/launch/word".into()],
         "excel" => vec!["https://www.office.com/launch/excel".into()],
         "powerpoint" => vec!["https://www.office.com/launch/powerpoint".into()],
         "vscode" => vec!["https://vscode.dev".into()],
         other if looks_like_domain(other) => vec![format!("https://{}", other)],
+        other if looks_like_simple_site_name(other) => vec![format!("https://{}.com", other), format!("https://www.{}.com", other)],
         _ => Vec::new(),
     }
 }
 
 fn looks_like_domain(value: &str) -> bool {
     value.contains('.') && !value.contains(' ') && !value.contains('/')
+}
+
+fn looks_like_simple_site_name(value: &str) -> bool {
+    let len = value.len();
+    (2..=30).contains(&len)
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        && value
+            .chars()
+            .next()
+            .map(|ch| ch.is_ascii_alphanumeric())
+            .unwrap_or(false)
 }
 
 fn open_installed_app(target: &str) -> Result<(), String> {
@@ -1562,7 +1587,7 @@ fn macos_app_name_for_target(target: &str) -> Option<&'static str> {
         "telegram" => Some("Telegram"),
         "discord" => Some("Discord"),
         "whatsapp" => Some("WhatsApp"),
-        "chrome" => Some("Google Chrome"),
+        "chrome" | "browser" => Some("Google Chrome"),
         "word" => Some("Microsoft Word"),
         "excel" => Some("Microsoft Excel"),
         "powerpoint" => Some("Microsoft PowerPoint"),
@@ -1578,6 +1603,7 @@ fn command_alias_for_target(target: &str) -> Option<&'static str> {
         "telegram" => Some("tg://"),
         "discord" => Some("discord://"),
         "whatsapp" => Some("whatsapp://"),
+        "browser" => Some("https://www.google.com"),
         "word" => Some("winword"),
         "excel" => Some("excel"),
         "powerpoint" => Some("powerpnt"),
@@ -1763,13 +1789,27 @@ async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCo
 }
 
 fn normalize_voice_target(target: &str) -> String {
-    match target.trim().to_lowercase().as_str() {
+    let cleaned = target
+        .trim()
+        .to_lowercase()
+        .replace("website", "")
+        .replace("desktop app", "")
+        .replace("application", "")
+        .replace(" app", "")
+        .split_whitespace()
+        .filter(|word| !matches!(*word, "my" | "the" | "a" | "an" | "site"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    match cleaned.as_str() {
         "twitter" => "x".into(),
+        "browser" | "internet" | "web" => "browser".into(),
         "microsoft word" | "ms word" => "word".into(),
         "microsoft excel" | "ms excel" => "excel".into(),
         "microsoft powerpoint" | "power point" | "ms powerpoint" => "powerpoint".into(),
         "vs code" | "visual studio code" => "vscode".into(),
-        other => other.to_string(),
+        "youtube" => "youtube.com".into(),
+        "chat gpt" | "chatgpt" => "chatgpt.com".into(),
+        other => other.replace(' ', "").to_string(),
     }
 }
 
