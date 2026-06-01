@@ -1668,7 +1668,7 @@ function parseVoiceCommandDecision(phrase: string): VoiceCommandDecision {
     const actionWord = ['open', 'launch', 'start', 'close', 'quit', 'stop'].includes(commandMatch[1]) ? commandMatch[1] : commandMatch[2];
     const rawTarget = ['open', 'launch', 'start', 'close', 'quit', 'stop'].includes(commandMatch[1]) ? commandMatch[2] : commandMatch[1];
     const action: VoiceCommandAction = ['close', 'quit', 'stop'].includes(actionWord) ? 'close' : 'open';
-    const target = resolveVoiceCommandTarget(rawTarget);
+    const target = resolveVoiceCommandTarget(rawTarget, action);
     if (target) return { action, target, confidence: 0.9, reason: 'local fuzzy grammar match' };
   }
 
@@ -1684,7 +1684,7 @@ function parseVoiceCommandDecision(phrase: string): VoiceCommandDecision {
   return { action: 'none', target: '', confidence: 0, reason: 'no exact match' };
 }
 
-function resolveVoiceCommandTarget(rawTarget: string) {
+function resolveVoiceCommandTarget(rawTarget: string, action: VoiceCommandAction = 'open') {
   const cleanedTarget = rawTarget
     .trim()
     .toLowerCase()
@@ -1731,6 +1731,7 @@ function resolveVoiceCommandTarget(rawTarget: string) {
   const normalizedTargets = voiceCommandTargets.map((target) => normalizeVoiceCommandTarget(target));
   if (normalizedTargets.includes(normalized as typeof normalizedTargets[number])) return normalized;
   if (compact.includes('.')) return compact;
+  if (action === 'open' && normalized.includes(' ') && compact.length >= 3) return `search:${normalized}`;
   if (/^[a-z0-9][a-z0-9-]{1,30}$/.test(compact)) return compact;
   return '';
 }

@@ -1524,10 +1524,23 @@ fn web_fallbacks_for_target(target: &str) -> Vec<String> {
         "excel" => vec!["https://www.office.com/launch/excel".into()],
         "powerpoint" => vec!["https://www.office.com/launch/powerpoint".into()],
         "vscode" => vec!["https://vscode.dev".into()],
+        other if other.starts_with("search:") => vec![format!("https://www.google.com/search?q={}", encode_query_component(other.trim_start_matches("search:")))],
         other if looks_like_domain(other) => vec![format!("https://{}", other)],
         other if looks_like_simple_site_name(other) => vec![format!("https://{}.com", other), format!("https://www.{}.com", other)],
         _ => Vec::new(),
     }
+}
+
+fn encode_query_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => encoded.push(byte as char),
+            b' ' => encoded.push('+'),
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn looks_like_domain(value: &str) -> bool {
@@ -1789,6 +1802,10 @@ async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCo
 }
 
 fn normalize_voice_target(target: &str) -> String {
+    let trimmed = target.trim().to_lowercase();
+    if trimmed.starts_with("search:") {
+        return trimmed;
+    }
     let cleaned = target
         .trim()
         .to_lowercase()
