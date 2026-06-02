@@ -882,3 +882,4 @@ textarea { line-height: 1.55; }
 .command-history-row small { color: #6b665e; font-size: 12px; }
 .empty-command-history { border: 1px dashed #ddd8cf; border-radius: 12px; padding: 16px; color: #7d766c; text-align: center; background: #fff; }
 @media (max-width: 920px) { .command-target-row { grid-template-columns: 1fr 1fr; } .command-target-row label.wide { grid-column: 1 / -1; } }
+.command-center-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }

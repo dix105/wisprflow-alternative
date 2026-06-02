@@ -1504,6 +1504,110 @@ fn paste_transcript(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn discover_windows_app_targets() -> Result<Vec<VoiceCommandTarget>, String> {
+    #[cfg(windows)]
+    {
+        let mut apps = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut roots = Vec::new();
+        if let Ok(program_data) = std::env::var("PROGRAMDATA") {
+            roots.push(PathBuf::from(program_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
+        }
+        if let Ok(app_data) = std::env::var("APPDATA") {
+            roots.push(PathBuf::from(app_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
+        }
+
+        for root in roots {
+            collect_start_menu_apps(&root, 0, &mut seen, &mut apps);
+        }
+        apps.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        Ok(apps)
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(windows)]
+fn collect_start_menu_apps(
+    dir: &PathBuf,
+    depth: usize,
+    seen: &mut std::collections::HashSet<String>,
+    apps: &mut Vec<VoiceCommandTarget>,
+) {
+    if depth > 5 || !dir.exists() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else { return; };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_start_menu_apps(&path, depth + 1, seen, apps);
+            continue;
+        }
+        let is_shortcut = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("lnk"))
+            .unwrap_or(false);
+        if !is_shortcut {
+            continue;
+        }
+        let Some(label) = path.file_stem().and_then(|name| name.to_str()).map(clean_windows_app_label) else { continue; };
+        if label.is_empty() || is_noisy_windows_shortcut(&label) {
+            continue;
+        }
+        let id = sanitize_target_id(&label.replace('&', "and"));
+        if id.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        apps.push(VoiceCommandTarget {
+            id,
+            label: label.clone(),
+            aliases: windows_app_aliases(&label),
+            kind: "app".into(),
+            open_value: path.to_string_lossy().to_string(),
+            close_processes: Vec::new(),
+            enabled: true,
+        });
+    }
+}
+
+#[cfg(windows)]
+fn clean_windows_app_label(value: &str) -> String {
+    value
+        .replace(".lnk", "")
+        .replace(" - Shortcut", "")
+        .trim()
+        .to_string()
+}
+
+#[cfg(windows)]
+fn is_noisy_windows_shortcut(label: &str) -> bool {
+    let normalized = label.to_lowercase();
+    normalized.contains("uninstall")
+        || normalized.contains("readme")
+        || normalized.contains("license")
+        || normalized.contains("documentation")
+        || normalized.contains("release notes")
+        || normalized.contains("website")
+}
+
+#[cfg(windows)]
+fn windows_app_aliases(label: &str) -> Vec<String> {
+    let lower = label.to_lowercase();
+    let mut aliases = Vec::new();
+    if lower.contains("visual studio code") { aliases.push("vs code".into()); aliases.push("code".into()); }
+    if lower.contains("google chrome") { aliases.push("chrome".into()); aliases.push("browser".into()); }
+    if lower.contains("microsoft word") { aliases.push("word".into()); }
+    if lower.contains("microsoft excel") { aliases.push("excel".into()); }
+    if lower.contains("microsoft powerpoint") { aliases.push("powerpoint".into()); }
+    aliases
+}
+
+#[tauri::command]
 fn execute_voice_command_target(action: String, target: VoiceCommandTarget) -> Result<(), String> {
     if !target.enabled {
         return Err(format!("{} is disabled", target.label));
@@ -2219,6 +2323,7 @@ pub fn run() {
             paste_transcript,
             open_voice_target,
             close_voice_target,
+            discover_windows_app_targets,
             execute_voice_command_target,
             classify_voice_command,
             copy_selected_text,
