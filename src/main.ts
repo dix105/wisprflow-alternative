@@ -1608,7 +1608,20 @@ async function importWindowsApps(options: { silent?: boolean } = {}) {
   const byId = new Map(commandTargets.map((target) => [target.id, target]));
   for (const appTarget of discovered) {
     const normalized = normalizeCommandTarget(appTarget);
-    if (!normalized.id || byId.has(normalized.id)) continue;
+    if (!normalized.id) continue;
+    const existing = byId.get(normalized.id);
+    // If Windows found a real Start Menu shortcut, prefer it over the default
+    // website fallback, but preserve user aliases and manual close mappings.
+    if (existing) {
+      byId.set(normalized.id, {
+        ...existing,
+        kind: normalized.kind,
+        openValue: normalized.openValue || existing.openValue,
+        aliases: Array.from(new Set([...existing.aliases, ...normalized.aliases])),
+        closeProcesses: existing.closeProcesses.length ? existing.closeProcesses : normalized.closeProcesses,
+      });
+      continue;
+    }
     byId.set(normalized.id, normalized);
   }
   commandTargets = Array.from(byId.values()).sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.label.localeCompare(b.label));
@@ -1933,6 +1946,7 @@ async function executeVoiceCommandDecision(phrase: string, decision: VoiceComman
     const result = `${decision.action === 'open' ? 'Opened' : 'Closed'} ${executionTarget.label}`;
     recordCommandHistory(phrase, { ...decision, target: executionTarget.id, targetId: target?.id }, result);
     setStatus('success', `${result}${confidence ? ` · confidence ${confidence}` : ''}.`);
+    await speakCommandMessage(`${result}.`);
   } catch (error) {
     const result = String(error);
     recordCommandHistory(phrase, { ...decision, target: executionTarget.id, targetId: target?.id }, result);
@@ -1951,25 +1965,29 @@ function shouldAskForCommandClarification(phrase: string) {
 async function speakCommandClarification() {
   const message = 'Can you please clarify?';
   setStatus('idle', message);
+  await speakCommandMessage(message, 'clarification');
+}
+
+async function speakCommandMessage(message: string, reason = 'confirmation') {
   const key = sarvamApiKeyInput.value.trim();
   if (!key || !isTauriRuntime) {
-    addDebugEvent('sarvam_clarification_tts_skipped', { reason: key ? 'not tauri runtime' : 'missing Sarvam key' });
+    addDebugEvent('sarvam_command_tts_skipped', { reason: key ? 'not tauri runtime' : 'missing Sarvam key', message });
     speakWithBrowserFemaleVoice(message);
     return;
   }
   try {
-    addDebugEvent('sarvam_clarification_tts_start', { speaker: 'anushka' });
+    addDebugEvent('sarvam_command_tts_start', { speaker: 'anushka', reason, message });
     const base64Audio = await invoke<string>('sarvam_text_to_speech', { apiKey: key, text: message });
     const audio = new Audio(`data:audio/wav;base64,${base64Audio}`);
-    audio.addEventListener('ended', () => addDebugEvent('sarvam_clarification_tts_ended'));
+    audio.addEventListener('ended', () => addDebugEvent('sarvam_command_tts_ended', { reason }));
     audio.addEventListener('error', () => {
-      addDebugEvent('sarvam_clarification_audio_error');
+      addDebugEvent('sarvam_command_audio_error', { reason });
       speakWithBrowserFemaleVoice(message);
     });
     await audio.play();
-    addDebugEvent('sarvam_clarification_tts_playing');
+    addDebugEvent('sarvam_command_tts_playing', { reason });
   } catch (error) {
-    addDebugEvent('sarvam_clarification_tts_failed', String(error));
+    addDebugEvent('sarvam_command_tts_failed', { reason, error: String(error) });
     speakWithBrowserFemaleVoice(message);
   }
 }
