@@ -163,9 +163,27 @@ struct GroqChatMessage {
 #[derive(Debug, Serialize, Deserialize)]
 struct VoiceCommandDecision {
     action: String,
+    #[serde(default)]
     target: String,
+    #[serde(rename = "targetId", skip_serializing_if = "Option::is_none")]
+    target_id: Option<String>,
     confidence: f32,
     reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct VoiceCommandTarget {
+    id: String,
+    label: String,
+    aliases: Vec<String>,
+    kind: String,
+    #[serde(rename = "openValue")]
+    open_value: String,
+    #[serde(rename = "closeProcesses")]
+    close_processes: Vec<String>,
+    enabled: bool,
 }
 
 #[tauri::command]
@@ -1486,6 +1504,108 @@ fn paste_transcript(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn execute_voice_command_target(action: String, target: VoiceCommandTarget) -> Result<(), String> {
+    if !target.enabled {
+        return Err(format!("{} is disabled", target.label));
+    }
+    let action = action.trim().to_lowercase();
+    match action.as_str() {
+        "open" => open_configured_voice_target(&target),
+        "close" => close_configured_voice_target(&target),
+        _ => Err("Unsupported voice command action".into()),
+    }
+}
+
+fn open_configured_voice_target(target: &VoiceCommandTarget) -> Result<(), String> {
+    let open_value = target.open_value.trim();
+    match target.kind.as_str() {
+        "url" => {
+            if !is_safe_open_destination(open_value) {
+                return Err(format!("Unsafe URL mapping for {}", target.label));
+            }
+            open_destination(open_value)
+        }
+        "app" => {
+            if !open_value.is_empty() && is_safe_app_open_value(open_value) {
+                if open_destination(open_value).is_ok() {
+                    return Ok(());
+                }
+            }
+            open_installed_app(&normalize_voice_target(&target.id))
+        }
+        "process" => Err("Process targets can only be closed, not opened".into()),
+        other => Err(format!("Unsupported target kind: {other}")),
+    }
+}
+
+fn close_configured_voice_target(target: &VoiceCommandTarget) -> Result<(), String> {
+    if target.close_processes.is_empty() {
+        return Err(format!("{} has no allowlisted close processes", target.label));
+    }
+
+    #[cfg(windows)]
+    {
+        for process in &target.close_processes {
+            if !is_safe_process_name(process) {
+                return Err(format!("Unsafe process mapping for {}: {process}", target.label));
+            }
+        }
+        for process in &target.close_processes {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/IM", process, "/T", "/F"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_name = macos_app_name_for_target(&normalize_voice_target(&target.id)).unwrap_or(target.label.as_str());
+        let script = format!("tell application \"{}\" to quit", app_name.replace('"', ""));
+        std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .status()
+            .map_err(|e| format!("Could not close {app_name}: {e}"))?
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("Close command failed for {app_name}"))
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        Err("Close voice commands are only mapped on Windows and macOS right now".into())
+    }
+}
+
+fn is_safe_open_destination(value: &str) -> bool {
+    let value = value.trim().to_lowercase();
+    value.starts_with("https://") || value.starts_with("http://") || looks_like_domain(&value)
+}
+
+fn is_safe_app_open_value(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 180
+        && !value.contains('\n')
+        && !value.contains('\r')
+        && !value.contains('&')
+        && !value.contains('|')
+        && !value.contains(';')
+        && !value.contains('>')
+        && !value.contains('<')
+}
+
+#[cfg(windows)]
+fn is_safe_process_name(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 80
+        && value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+}
+
+#[tauri::command]
 fn open_voice_target(target: String) -> Result<(), String> {
     let target = normalize_voice_target(&target);
     if open_installed_app(&target).is_ok() {
@@ -1744,7 +1864,7 @@ fn close_voice_target(target: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCommandDecision, String> {
+async fn classify_voice_command(api_key: String, text: String, targets: Vec<VoiceCommandTarget>) -> Result<VoiceCommandDecision, String> {
     if api_key.trim().is_empty() {
         return Err("Missing Cerebras API key".into());
     }
@@ -1753,17 +1873,33 @@ async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCo
         return Err("No voice command text to classify".into());
     }
 
-    let targets = "notion, telegram, discord, x, twitter, whatsapp, chrome, gmail, calendar, github, word, excel, powerpoint, vscode, or a short app/site name such as slack, linear, figma, cursor, claude, youtube, agentplace.sh";
+    let allowed_targets: Vec<serde_json::Value> = targets
+        .iter()
+        .filter(|target| target.enabled)
+        .map(|target| serde_json::json!({
+            "id": target.id,
+            "label": target.label,
+            "aliases": target.aliases,
+            "kind": target.kind,
+            "canClose": !target.close_processes.is_empty()
+        }))
+        .collect();
+    let allowed_target_ids: std::collections::HashSet<String> = targets
+        .iter()
+        .filter(|target| target.enabled)
+        .map(|target| target.id.trim().to_lowercase())
+        .collect();
+
     let body = serde_json::json!({
         "model": "llama3.1-8b",
         "temperature": 0,
-        "max_tokens": 120,
+        "max_tokens": 140,
         "messages": [
             {
                 "role": "system",
-                "content": format!("You classify always-on desktop voice commands. Return ONLY compact JSON with keys action,target,confidence,reason. action must be open, close, or none. target should be a short normalized app/site name. Prefer known targets: {targets}. Use x for Twitter/X, vscode for VS Code, word for Microsoft Word. For websites, return a bare domain like agentplace.sh if clearly requested. If the user is not clearly asking to open or close an app/site, action none and target empty. Be conservative because this controls the user's computer.")
+                "content": "You classify always-on desktop voice commands. Return ONLY compact JSON with keys action,targetId,confidence,reason. action must be open, close, or none. targetId MUST be one of the provided target IDs. Use aliases to resolve fuzzy phrases like 'my notes'. If the user asks for an unknown target, arbitrary shell command, delete, file operation, message sending, search/multi-step browsing, or account action, return action none and targetId empty. Be conservative because this controls the user's computer."
             },
-            { "role": "user", "content": input }
+            { "role": "user", "content": serde_json::json!({ "phrase": input, "allowedTargets": allowed_targets }).to_string() }
         ]
     });
 
@@ -1795,15 +1931,34 @@ async fn classify_voice_command(api_key: String, text: String) -> Result<VoiceCo
     let mut decision: VoiceCommandDecision = serde_json::from_str(json)
         .map_err(|e| format!("Could not parse Cerebras command JSON: {e}: {content}"))?;
     decision.action = decision.action.trim().to_lowercase();
-    decision.target = normalize_voice_target(&decision.target);
+    let target_id = decision.target_id.clone().unwrap_or_else(|| decision.target.clone());
+    let normalized_target_id = sanitize_target_id(&target_id);
     if !matches!(decision.action.as_str(), "open" | "close" | "none") {
         decision.action = "none".into();
     }
+    if decision.action != "none" && !allowed_target_ids.contains(&normalized_target_id) {
+        decision.action = "none".into();
+        decision.reason = format!("Rejected unknown target from GPT: {target_id}");
+    }
     if decision.action == "none" {
         decision.target.clear();
+        decision.target_id = None;
+    } else {
+        decision.target = normalized_target_id.clone();
+        decision.target_id = Some(normalized_target_id);
     }
     decision.confidence = decision.confidence.clamp(0.0, 1.0);
+    decision.source = Some("gpt-oss".into());
     Ok(decision)
+}
+
+fn sanitize_target_id(target: &str) -> String {
+    target
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(*ch, '.' | '-'))
+        .collect()
 }
 
 fn normalize_voice_target(target: &str) -> String {
@@ -2064,6 +2219,7 @@ pub fn run() {
             paste_transcript,
             open_voice_target,
             close_voice_target,
+            execute_voice_command_target,
             classify_voice_command,
             copy_selected_text,
             save_transcript,
