@@ -67,6 +67,7 @@ type VoiceCommandDecision = {
   action: VoiceCommandAction;
   target: string;
   targetId?: string;
+  url?: string;
   confidence: number;
   reason: string;
   source?: CommandDecisionSource;
@@ -1892,9 +1893,9 @@ async function handleVoiceCommand(payload: string) {
   if (aiVoiceCommandsEnabled && shouldUseAiVoiceCommandFallback(heardPhrase, decision)) {
     const aiDecision = await classifyVoiceCommandWithCerebras(heardPhrase);
     addDebugEvent('voice_command_ai_decision', aiDecision);
-    if (aiDecision.action !== 'none' && (aiDecision.targetId || aiDecision.target)) decision = aiDecision;
+    if (aiDecision.action !== 'none' && (aiDecision.targetId || aiDecision.target || aiDecision.url)) decision = aiDecision;
   }
-  if (decision.action === 'none' || !(decision.targetId || decision.target)) {
+  if (decision.action === 'none' || !(decision.targetId || decision.target || decision.url)) {
     recordCommandHistory(heardPhrase, decision, 'ignored');
     if (shouldAskForCommandClarification(heardPhrase)) await speakCommandClarification();
     return;
@@ -1904,22 +1905,24 @@ async function handleVoiceCommand(payload: string) {
 
 async function executeVoiceCommandDecision(phrase: string, decision: VoiceCommandDecision, confidence = '') {
   const target = findCommandTarget(decision.targetId || decision.target);
-  if (!target) {
-    const result = `Unknown target: ${decision.targetId || decision.target}`;
+  const fallbackUrl = decision.action === 'open' ? safeVoiceCommandUrl(decision.url || decision.target) : '';
+  if (!target && !fallbackUrl) {
+    const result = `Unknown target: ${decision.targetId || decision.target || decision.url}`;
     recordCommandHistory(phrase, decision, result);
     setStatus('error', result);
     await speakCommandClarification();
     return;
   }
+  const executionTarget = target || { id: fallbackUrl, label: new URL(fallbackUrl).hostname.replace(/^www\./, ''), aliases: [], kind: 'url' as const, openValue: fallbackUrl, closeProcesses: [], enabled: true };
   try {
-    await invoke('execute_voice_command_target', { action: decision.action, target });
-    const result = `${decision.action === 'open' ? 'Opened' : 'Closed'} ${target.label}`;
-    recordCommandHistory(phrase, { ...decision, target: target.id, targetId: target.id }, result);
+    await invoke('execute_voice_command_target', { action: decision.action, target: executionTarget });
+    const result = `${decision.action === 'open' ? 'Opened' : 'Closed'} ${executionTarget.label}`;
+    recordCommandHistory(phrase, { ...decision, target: executionTarget.id, targetId: target?.id }, result);
     setStatus('success', `${result}${confidence ? ` · confidence ${confidence}` : ''}.`);
   } catch (error) {
     const result = String(error);
-    recordCommandHistory(phrase, { ...decision, target: target.id, targetId: target.id }, result);
-    addDebugEvent('voice_command_open_or_close_failed', { decision, target, error: result });
+    recordCommandHistory(phrase, { ...decision, target: executionTarget.id, targetId: target?.id }, result);
+    addDebugEvent('voice_command_open_or_close_failed', { decision, target: executionTarget, error: result });
     await speakCommandClarification();
   }
 }
@@ -1996,10 +1999,10 @@ async function classifyVoiceCommandWithCerebras(phrase: string): Promise<VoiceCo
     const decision = await invoke<VoiceCommandDecision>('classify_voice_command', { apiKey: key, text: phrase, targets: enabledCommandTargets() });
     if (decision.confidence < 0.65) return { action: 'none', target: '', confidence: decision.confidence, reason: `low confidence: ${decision.reason}`, source: 'gpt-oss' };
     const targetId = decision.targetId || decision.target;
-    if (decision.action !== 'none' && !findCommandTarget(targetId)) {
-      return { action: 'none', target: '', confidence: 0, reason: `unknown target from GPT: ${targetId}`, source: 'gpt-oss' };
+    if (decision.action !== 'none' && !findCommandTarget(targetId) && !safeVoiceCommandUrl(decision.url || decision.target)) {
+      return { action: 'none', target: '', confidence: 0, reason: `unknown target/url from GPT: ${targetId}`, source: 'gpt-oss' };
     }
-    return { ...decision, target: targetId, targetId, source: 'gpt-oss' };
+    return { ...decision, target: decision.url || targetId, targetId: findCommandTarget(targetId)?.id, source: 'gpt-oss' };
   } catch (error) {
     addDebugEvent('voice_command_ai_error', String(error));
     return { action: 'none', target: '', confidence: 0, reason: String(error) };
@@ -2052,6 +2055,21 @@ function findCommandTarget(value: string | undefined) {
 
 function normalizeCommandPhrase(value: string) {
   return value.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function safeVoiceCommandUrl(value: string | undefined) {
+  if (!value) return '';
+  try {
+    const raw = value.trim();
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : raw.includes('.') ? `https://${raw}` : '';
+    if (!withProtocol) return '';
+    const url = new URL(withProtocol);
+    if (!['https:', 'http:'].includes(url.protocol)) return '';
+    if (!url.hostname || !url.hostname.includes('.')) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
 }
 
 function providerFriendlyTarget(target: string) {

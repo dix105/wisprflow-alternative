@@ -167,6 +167,8 @@ struct VoiceCommandDecision {
     target: String,
     #[serde(rename = "targetId", skip_serializing_if = "Option::is_none")]
     target_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
     confidence: f32,
     reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2037,7 +2039,7 @@ async fn classify_voice_command(api_key: String, text: String, targets: Vec<Voic
         "messages": [
             {
                 "role": "system",
-                "content": "You classify always-on desktop voice commands. Return ONLY compact JSON with keys action,targetId,confidence,reason. action must be open, close, or none. targetId MUST be one of the provided target IDs. Use aliases to resolve fuzzy phrases like 'my notes'. If the user asks for an unknown target, arbitrary shell command, delete, file operation, message sending, search/multi-step browsing, or account action, return action none and targetId empty. Be conservative because this controls the user's computer."
+                "content": "You classify always-on desktop voice commands. Return ONLY compact JSON with keys action,targetId,url,confidence,reason. action must be open, close, or none. Prefer targetId when the request matches one of the provided allowed target IDs or aliases. If the user asks to open a website/service/app that is not in allowedTargets, you MAY return action open with targetId empty and url set to the official HTTPS homepage, for example https://instagram.com. Only return URLs starting with https:// or http://. Never return shell commands, local file paths, javascript/data URLs, deep links, message sending, account actions, delete/file operations, or multi-step browsing. Close actions MUST use targetId from allowedTargets and must never use url. Be conservative because this controls the user's computer."
             },
             { "role": "user", "content": serde_json::json!({ "phrase": input, "allowedTargets": allowed_targets }).to_string() }
         ]
@@ -2076,16 +2078,35 @@ async fn classify_voice_command(api_key: String, text: String, targets: Vec<Voic
     if !matches!(decision.action.as_str(), "open" | "close" | "none") {
         decision.action = "none".into();
     }
-    if decision.action != "none" && !allowed_target_ids.contains(&normalized_target_id) {
+
+    let safe_url = decision
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| is_safe_open_destination(url))
+        .map(|url| url.to_string());
+
+    if decision.action == "close" && !allowed_target_ids.contains(&normalized_target_id) {
         decision.action = "none".into();
-        decision.reason = format!("Rejected unknown target from GPT: {target_id}");
+        decision.reason = format!("Rejected close for unknown target from GPT: {target_id}");
+    } else if decision.action == "open" && !allowed_target_ids.contains(&normalized_target_id) && safe_url.is_none() {
+        decision.action = "none".into();
+        decision.reason = format!("Rejected unknown target/url from GPT: {target_id}");
     }
+
     if decision.action == "none" {
         decision.target.clear();
         decision.target_id = None;
-    } else {
+        decision.url = None;
+    } else if allowed_target_ids.contains(&normalized_target_id) {
         decision.target = normalized_target_id.clone();
         decision.target_id = Some(normalized_target_id);
+        decision.url = None;
+    } else {
+        let url = safe_url.unwrap_or_default();
+        decision.target = url.clone();
+        decision.target_id = None;
+        decision.url = Some(url);
     }
     decision.confidence = decision.confidence.clamp(0.0, 1.0);
     decision.source = Some("gpt-oss".into());
